@@ -22,6 +22,7 @@
     'node_use_openssl%': 'true',
     'node_shared_openssl%': 'false',
     'node_v8_options%': '',
+    'node_enable_v8_vtunejit%': 'false',
     'node_core_target_name%': 'node',
     'node_lib_target_name%': 'libnode',
     'node_intermediate_lib_type%': 'static_library',
@@ -48,9 +49,7 @@
       'deps/v8/tools/tickprocessor-driver.mjs',
       'deps/acorn/acorn/dist/acorn.js',
       'deps/acorn/acorn-walk/dist/walk.js',
-      'deps/cjs-module-lexer/lexer.js',
-      'deps/cjs-module-lexer/dist/lexer.js',
-      'deps/undici/undici.js',
+      '<@(node_builtin_shareable_builtins)',
     ],
     'node_mksnapshot_exec': '<(PRODUCT_DIR)/<(EXECUTABLE_PREFIX)node_mksnapshot<(EXECUTABLE_SUFFIX)',
     'conditions': [
@@ -226,13 +225,16 @@
             },
           },
           'conditions': [
-            ['OS != "aix" and OS != "mac"', {
+            ['OS != "aix" and OS != "mac" and OS != "ios"', {
               'ldflags': [
                 '-Wl,--whole-archive',
                 '<(obj_dir)/<(STATIC_LIB_PREFIX)<(node_core_target_name)<(STATIC_LIB_SUFFIX)',
                 '<(obj_dir)/tools/v8_gypfiles/<(STATIC_LIB_PREFIX)v8_base_without_compiler<(STATIC_LIB_SUFFIX)',
                 '-Wl,--no-whole-archive',
               ],
+            }],
+            [ 'OS=="win"', {
+              'sources': [ 'src/res/node.rc' ],
             }],
           ],
         }],
@@ -428,7 +430,7 @@
                'inputs': [ '<(opensslconfig)', ],
                'outputs': [ '<(opensslconfig_internal)', ],
                'action': [
-                 'python', 'tools/copyfile.py',
+                 '<(python)', 'tools/copyfile.py',
                  '<(opensslconfig)',
                  '<(opensslconfig_internal)',
                ],
@@ -465,6 +467,7 @@
         'src/api/hooks.cc',
         'src/api/utils.cc',
         'src/async_wrap.cc',
+        'src/base_object.cc',
         'src/cares_wrap.cc',
         'src/cleanup_queue.cc',
         'src/connect_wrap.cc',
@@ -599,6 +602,7 @@
         'src/node_contextify.h',
         'src/node_dir.h',
         'src/node_errors.h',
+        'src/node_exit_code.h',
         'src/node_external_reference.h',
         'src/node_file.h',
         'src/node_file-inl.h',
@@ -680,6 +684,8 @@
         'openssl_system_ca_path%': '',
         'openssl_default_cipher_list%': '',
       },
+
+      'cflags': ['-Werror=unused-result'],
 
       'defines': [
         'NODE_ARCH="<(target_arch)"',
@@ -853,6 +859,9 @@
               ],
             },
           ],
+        }],
+        [ 'debug_nghttp2==1', {
+          'defines': [ 'NODE_DEBUG_NGHTTP2=1' ]
         }],
       ],
       'actions': [

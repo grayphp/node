@@ -272,7 +272,7 @@ const { exec } = require('node:child_process');
 const controller = new AbortController();
 const { signal } = controller;
 const child = exec('grep ssh', { signal }, (error) => {
-  console.log(error); // an AbortError
+  console.error(error); // an AbortError
 });
 controller.abort();
 ```
@@ -384,7 +384,7 @@ const { execFile } = require('node:child_process');
 const controller = new AbortController();
 const { signal } = controller;
 const child = execFile('node', ['--version'], { signal }, (error) => {
-  console.log(error); // an AbortError
+  console.error(error); // an AbortError
 });
 controller.abort();
 ```
@@ -606,7 +606,7 @@ A third argument may be used to specify additional options, with these defaults:
 ```js
 const defaults = {
   cwd: undefined,
-  env: process.env
+  env: process.env,
 };
 ```
 
@@ -692,9 +692,9 @@ subprocess.on('error', (err) => {
 Certain platforms (macOS, Linux) will use the value of `argv[0]` for the process
 title while others (Windows, SunOS) will use `command`.
 
-Node.js currently overwrites `argv[0]` with `process.execPath` on startup, so
+Node.js overwrites `argv[0]` with `process.execPath` on startup, so
 `process.argv[0]` in a Node.js child process will not match the `argv0`
-parameter passed to `spawn` from the parent, retrieve it with the
+parameter passed to `spawn` from the parent. Retrieve it with the
 `process.argv0` property instead.
 
 If the `signal` option is enabled, calling `.abort()` on the corresponding
@@ -749,7 +749,7 @@ const { spawn } = require('node:child_process');
 
 const subprocess = spawn(process.argv[0], ['child_program.js'], {
   detached: true,
-  stdio: 'ignore'
+  stdio: 'ignore',
 });
 
 subprocess.unref();
@@ -765,7 +765,7 @@ const err = fs.openSync('./out.log', 'a');
 
 const subprocess = spawn('prg', [], {
   detached: true,
-  stdio: [ 'ignore', out, err ]
+  stdio: [ 'ignore', out, err ],
 });
 
 subprocess.unref();
@@ -810,7 +810,7 @@ pipes between the parent and child. The value is one of the following:
    `child_process` object as [`subprocess.stdio[fd]`][`subprocess.stdio`]. Pipes
    created for fds 0, 1, and 2 are also available as [`subprocess.stdin`][],
    [`subprocess.stdout`][] and [`subprocess.stderr`][], respectively.
-   Currently, these are not actual Unix pipes and therefore the child process
+   These are not actual Unix pipes and therefore the child process
    can not use them by their descriptor files,
    e.g. `/dev/fd/2` or `/dev/stdout`.
 2. `'overlapped'`: Same as `'pipe'` except that the `FILE_FLAG_OVERLAPPED` flag
@@ -845,7 +845,7 @@ pipes between the parent and child. The value is one of the following:
    underlying descriptor (file streams do not until the `'open'` event has
    occurred).
 7. Positive integer: The integer value is interpreted as a file descriptor
-   that is currently open in the parent process. It is shared with the child
+   that is open in the parent process. It is shared with the child
    process, similar to how {Stream} objects can be shared. Passing sockets
    is not supported on Windows.
 8. `null`, `undefined`: Use default value. For stdio fds 0, 1, and 2 (in other
@@ -1274,7 +1274,7 @@ changes:
 * {Object} A pipe representing the IPC channel to the child process.
 
 The `subprocess.channel` property is a reference to the child's IPC channel. If
-no IPC channel currently exists, this property is `undefined`.
+no IPC channel exists, this property is `undefined`.
 
 #### `subprocess.channel.ref()`
 
@@ -1392,8 +1392,8 @@ const subprocess = spawn(
       console.log(process.pid, 'is alive')
     }, 500);"`,
   ], {
-    stdio: ['inherit', 'inherit', 'inherit']
-  }
+    stdio: ['inherit', 'inherit', 'inherit'],
+  },
 );
 
 setTimeout(() => {
@@ -1449,7 +1449,7 @@ const { spawn } = require('node:child_process');
 
 const subprocess = spawn(process.argv[0], ['child_program.js'], {
   detached: true,
-  stdio: 'ignore'
+  stdio: 'ignore',
 });
 
 subprocess.unref();
@@ -1583,7 +1583,7 @@ can be handled by the parent and some by the child.
 While the example above uses a server created using the `node:net` module,
 `node:dgram` module servers use exactly the same workflow with the exceptions of
 listening on a `'message'` event instead of `'connection'` and using
-`server.bind()` instead of `server.listen()`. This is, however, currently only
+`server.bind()` instead of `server.listen()`. This is, however, only
 supported on Unix platforms.
 
 #### Example: sending a socket object
@@ -1733,7 +1733,7 @@ const subprocess = child_process.spawn('ls', {
     0, // Use parent's stdin for child.
     'pipe', // Pipe child's stdout to parent.
     fs.openSync('err.out', 'w'), // Direct child's stderr to a file.
-  ]
+  ],
 });
 
 assert.strictEqual(subprocess.stdio[0], null);
@@ -1796,7 +1796,7 @@ const { spawn } = require('node:child_process');
 
 const subprocess = spawn(process.argv[0], ['child_program.js'], {
   detached: true,
-  stdio: 'ignore'
+  stdio: 'ignore',
 });
 
 subprocess.unref();

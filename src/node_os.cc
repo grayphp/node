@@ -28,7 +28,6 @@
 #endif  // __MINGW32__
 
 #ifdef __POSIX__
-# include <unistd.h>        // gethostname, sysconf
 # include <climits>         // PATH_MAX on Solaris.
 #endif  // __POSIX__
 
@@ -424,5 +423,5 @@ void RegisterExternalReferences(ExternalReferenceRegistry* registry) {
 }  // namespace os
 }  // namespace node
 
-NODE_MODULE_CONTEXT_AWARE_INTERNAL(os, node::os::Initialize)
-NODE_MODULE_EXTERNAL_REFERENCE(os, node::os::RegisterExternalReferences)
+NODE_BINDING_CONTEXT_AWARE_INTERNAL(os, node::os::Initialize)
+NODE_BINDING_EXTERNAL_REFERENCE(os, node::os::RegisterExternalReferences)

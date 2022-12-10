@@ -258,7 +258,8 @@ class DebugSealHandleScope {
 
 class ThreadPoolWork {
  public:
-  explicit inline ThreadPoolWork(Environment* env) : env_(env) {
+  explicit inline ThreadPoolWork(Environment* env, const char* type)
+      : env_(env), type_(type) {
     CHECK_NOT_NULL(env);
   }
   inline virtual ~ThreadPoolWork() = default;
@@ -274,6 +275,7 @@ class ThreadPoolWork {
  private:
   Environment* env_;
   uv_work_t work_req_;
+  const char* type_;
 };
 
 #define TRACING_CATEGORY_NODE "node"
@@ -312,14 +314,15 @@ void MarkBootstrapComplete(const v8::FunctionCallbackInfo<v8::Value>& args);
 class InitializationResultImpl final : public InitializationResult {
  public:
   ~InitializationResultImpl();
-  int exit_code() const { return exit_code_; }
+  int exit_code() const { return static_cast<int>(exit_code_enum()); }
+  ExitCode exit_code_enum() const { return exit_code_; }
   bool early_return() const { return early_return_; }
   const std::vector<std::string>& args() const { return args_; }
   const std::vector<std::string>& exec_args() const { return exec_args_; }
   const std::vector<std::string>& errors() const { return errors_; }
   MultiIsolatePlatform* platform() const { return platform_; }
 
-  int exit_code_ = 0;
+  ExitCode exit_code_ = ExitCode::kNoFailure;
   std::vector<std::string> args_;
   std::vector<std::string> exec_args_;
   std::vector<std::string> errors_;
@@ -379,7 +382,9 @@ class DiagnosticFilename {
 };
 
 namespace heap {
-v8::Maybe<void> WriteSnapshot(Environment* env, const char* filename);
+v8::Maybe<void> WriteSnapshot(Environment* env,
+                              const char* filename,
+                              v8::HeapProfiler::HeapSnapshotOptions options);
 }
 
 namespace heap {
@@ -420,6 +425,12 @@ std::ostream& operator<<(std::ostream& output,
 }
 
 bool linux_at_secure();
+
+namespace heap {
+v8::HeapProfiler::HeapSnapshotOptions GetHeapSnapshotOptions(
+    v8::Local<v8::Value> options);
+}  // namespace heap
+
 }  // namespace node
 
 #endif  // defined(NODE_WANT_INTERNALS) && NODE_WANT_INTERNALS

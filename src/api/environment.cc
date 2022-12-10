@@ -1,7 +1,9 @@
+#include <cstdlib>
 #include "node.h"
 #include "node_builtins.h"
 #include "node_context_data.h"
 #include "node_errors.h"
+#include "node_exit_code.h"
 #include "node_internals.h"
 #include "node_options-inl.h"
 #include "node_platform.h"
@@ -10,7 +12,9 @@
 #include "node_v8_platform-inl.h"
 #include "node_wasm_web_api.h"
 #include "uv.h"
-
+#ifdef NODE_ENABLE_VTUNE_PROFILING
+#include "../deps/v8/src/third_party/vtune/v8-vtune.h"
+#endif
 #if HAVE_INSPECTOR
 #include "inspector/worker_inspector.h"  // ParentInspectorHandle
 #endif
@@ -224,6 +228,10 @@ void SetIsolateCreateParamsForNode(Isolate::CreateParams* params) {
   }
   params->embedder_wrapper_object_index = BaseObject::InternalFields::kSlot;
   params->embedder_wrapper_type_index = std::numeric_limits<int>::max();
+
+#ifdef NODE_ENABLE_VTUNE_PROFILING
+  params->code_event_handler = vTune::GetVtuneCodeEventHandler();
+#endif
 }
 
 void SetIsolateErrorHandlers(v8::Isolate* isolate, const IsolateSettings& s) {
@@ -763,19 +771,39 @@ ThreadId AllocateEnvironmentThreadId() {
   return ThreadId { next_thread_id++ };
 }
 
-void DefaultProcessExitHandler(Environment* env, int exit_code) {
+[[noreturn]] void Exit(ExitCode exit_code) {
+  exit(static_cast<int>(exit_code));
+}
+
+void DefaultProcessExitHandlerInternal(Environment* env, ExitCode exit_code) {
   env->set_can_call_into_js(false);
   env->stop_sub_worker_contexts();
   env->isolate()->DumpAndResetStats();
-  DisposePlatform();
+  // When the process exits, the tasks in the thread pool may also need to
+  // access the data of V8Platform, such as trace agent, or a field
+  // added in the future. So make sure the thread pool exits first.
+  // And make sure V8Platform don not call into Libuv threadpool, see Dispose
+  // in node_v8_platform-inl.h
   uv_library_shutdown();
-  exit(exit_code);
+  DisposePlatform();
+  Exit(exit_code);
 }
 
+void DefaultProcessExitHandler(Environment* env, int exit_code) {
+  DefaultProcessExitHandlerInternal(env, static_cast<ExitCode>(exit_code));
+}
+
+void SetProcessExitHandler(
+    Environment* env, std::function<void(Environment*, ExitCode)>&& handler) {
+  env->set_process_exit_handler(std::move(handler));
+}
 
 void SetProcessExitHandler(Environment* env,
                            std::function<void(Environment*, int)>&& handler) {
-  env->set_process_exit_handler(std::move(handler));
+  auto movedHandler = std::move(handler);
+  env->set_process_exit_handler([=](Environment* env, ExitCode exit_code) {
+    movedHandler(env, static_cast<int>(exit_code));
+  });
 }
 
 }  // namespace node

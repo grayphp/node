@@ -364,11 +364,17 @@ inline bool Environment::force_context_aware() const {
 }
 
 inline void Environment::set_exiting(bool value) {
-  exiting_[0] = value ? 1 : 0;
+  exit_info_[kExiting] = value ? 1 : 0;
 }
 
-inline AliasedUint32Array& Environment::exiting() {
-  return exiting_;
+inline ExitCode Environment::exit_code(const ExitCode default_code) const {
+  return exit_info_[kHasExitCode] == 0
+             ? default_code
+             : static_cast<ExitCode>(exit_info_[kExitCode]);
+}
+
+inline AliasedInt32Array& Environment::exit_info() {
+  return exit_info_;
 }
 
 inline void Environment::set_abort_on_uncaught_exception(bool value) {
@@ -745,6 +751,12 @@ inline IsolateData* Environment::isolate_data() const {
   return isolate_data_;
 }
 
+template <typename T>
+inline void Environment::ForEachRealm(T&& iterator) const {
+  // TODO(legendecas): iterate over more realms bound to the environment.
+  iterator(principal_realm());
+}
+
 inline void Environment::ThrowError(const char* errmsg) {
   ThrowError(v8::Exception::Error, errmsg);
 }
@@ -789,34 +801,13 @@ void Environment::RemoveCleanupHook(CleanupQueue::Callback fn, void* arg) {
   cleanup_queue_.Remove(fn, arg);
 }
 
-template <typename T>
-void Environment::ForEachBaseObject(T&& iterator) {
-  cleanup_queue_.ForEachBaseObject(std::forward<T>(iterator));
-}
-
-void Environment::modify_base_object_count(int64_t delta) {
-  base_object_count_ += delta;
-}
-
-int64_t Environment::base_object_count() const {
-  return base_object_count_;
-}
-
-inline void Environment::set_base_object_created_by_bootstrap(int64_t count) {
-  base_object_created_by_bootstrap_ = base_object_count_;
-}
-
-int64_t Environment::base_object_created_after_bootstrap() const {
-  return base_object_count_ - base_object_created_by_bootstrap_;
-}
-
 void Environment::set_main_utf16(std::unique_ptr<v8::String::Value> str) {
   CHECK(!main_utf16_);
   main_utf16_ = std::move(str);
 }
 
 void Environment::set_process_exit_handler(
-    std::function<void(Environment*, int)>&& handler) {
+    std::function<void(Environment*, ExitCode)>&& handler) {
   process_exit_handler_ = std::move(handler);
 }
 

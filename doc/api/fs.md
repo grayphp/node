@@ -517,6 +517,46 @@ If one or more `filehandle.read()` calls are made on a file handle and then a
 position till the end of the file. It doesn't always read from the beginning
 of the file.
 
+#### `filehandle.readLines([options])`
+
+<!-- YAML
+added: v18.11.0
+-->
+
+* `options` {Object}
+  * `encoding` {string} **Default:** `null`
+  * `autoClose` {boolean} **Default:** `true`
+  * `emitClose` {boolean} **Default:** `true`
+  * `start` {integer}
+  * `end` {integer} **Default:** `Infinity`
+  * `highWaterMark` {integer} **Default:** `64 * 1024`
+* Returns: {readline.InterfaceConstructor}
+
+Convenience method to create a `readline` interface and stream over the file.
+See [`filehandle.createReadStream()`][] for the options.
+
+```mjs
+import { open } from 'node:fs/promises';
+
+const file = await open('./some/file/to/read');
+
+for await (const line of file.readLines()) {
+  console.log(line);
+}
+```
+
+```cjs
+const { open } = require('node:fs/promises');
+
+(async () => {
+  const file = await open('./some/file/to/read');
+
+  for await (const line of file.readLines()) {
+    console.log(line);
+  }
+})();
+```
+
 #### `filehandle.readv(buffers[, position])`
 
 <!-- YAML
@@ -866,7 +906,7 @@ added: v10.0.0
 changes:
   - version: v14.0.0
     pr-url: https://github.com/nodejs/node/pull/27044
-    description: Changed 'flags' argument to 'mode' and imposed
+    description: Changed `flags` argument to `mode` and imposed
                  stricter type validation.
 -->
 
@@ -901,7 +941,7 @@ try {
   await copyFile('source.txt', 'destination.txt');
   console.log('source.txt was copied to destination.txt');
 } catch {
-  console.log('The file could not be copied');
+  console.error('The file could not be copied');
 }
 
 // By using COPYFILE_EXCL, the operation will fail if destination.txt exists.
@@ -909,7 +949,7 @@ try {
   await copyFile('source.txt', 'destination.txt', constants.COPYFILE_EXCL);
   console.log('source.txt was copied to destination.txt');
 } catch {
-  console.log('The file could not be copied');
+  console.error('The file could not be copied');
 }
 ```
 
@@ -937,6 +977,9 @@ changes:
   * `filter` {Function} Function to filter copied files/directories. Return
     `true` to copy the item, `false` to ignore it. Can also return a `Promise`
     that resolves to `true` or `false` **Default:** `undefined`.
+    * `src` {string} source path to copy.
+    * `dest` {string} destination path to copy to.
+    * Returns: {boolean|Promise}
   * `force` {boolean} overwrite existing file or directory. The copy
     operation will ignore errors if you set this to false and the destination
     exists. Use the `errorOnExist` option to change this behavior.
@@ -1064,7 +1107,7 @@ import { mkdir } from 'node:fs/promises';
 
 try {
   const projectFolder = new URL('./test/project/', import.meta.url);
-  const createDir = await mkdir(path, { recursive: true });
+  const createDir = await mkdir(projectFolder, { recursive: true });
 
   console.log(`created ${createDir}`);
 } catch (err) {
@@ -1273,6 +1316,35 @@ platform-specific. On macOS, Linux, and Windows, the promise will be rejected
 with an error. On FreeBSD, a representation of the directory's contents will be
 returned.
 
+An example of reading a `package.json` file located in the same directory of the
+running code:
+
+```mjs
+import { readFile } from 'node:fs/promises';
+try {
+  const filePath = new URL('./package.json', import.meta.url);
+  const contents = await readFile(filePath, { encoding: 'utf8' });
+  console.log(contents);
+} catch (err) {
+  console.error(err.message);
+}
+```
+
+```cjs
+const { readFile } = require('node:fs/promises');
+const { resolve } = require('node:path');
+async function logFile() {
+  try {
+    const filePath = resolve('./package.json');
+    const contents = await readFile(filePath, { encoding: 'utf8' });
+    console.log(contents);
+  } catch (err) {
+    console.error(err.message);
+  }
+}
+logFile();
+```
+
 It is possible to abort an ongoing `readFile` using an {AbortSignal}. If a
 request is aborted the promise returned is rejected with an `AbortError`:
 
@@ -1463,18 +1535,27 @@ changes:
 
 <!-- YAML
 added: v10.0.0
+changes:
+  - version: v19.0.0
+    pr-url: https://github.com/nodejs/node/pull/42894
+    description: If the `type` argument is `null` or omitted, Node.js will
+                 autodetect `target` type and automatically
+                 select `dir` or `file`.
+
 -->
 
 * `target` {string|Buffer|URL}
 * `path` {string|Buffer|URL}
-* `type` {string} **Default:** `'file'`
+* `type` {string|null} **Default:** `null`
 * Returns: {Promise} Fulfills with `undefined` upon success.
 
 Creates a symbolic link.
 
 The `type` argument is only used on Windows platforms and can be one of `'dir'`,
-`'file'`, or `'junction'`. Windows junction points require the destination path
-to be absolute. When using `'junction'`, the `target` argument will
+`'file'`, or `'junction'`. If the `type` argument is not a string, Node.js will
+autodetect `target` type and use `'file'` or `'dir'`. If the `target` does not
+exist, `'file'` will be used. Windows junction points require the destination
+path to be absolute. When using `'junction'`, the `target` argument will
 automatically be normalized to absolute path.
 
 ### `fsPromises.truncate(path[, len])`
@@ -1655,6 +1736,12 @@ Aborting an ongoing request does not abort individual operating
 system requests but rather the internal buffering `fs.writeFile` performs.
 
 ### `fsPromises.constants`
+
+<!-- YAML
+added:
+  - v18.4.0
+  - v16.17.0
+-->
 
 * {Object}
 
@@ -2125,7 +2212,7 @@ changes:
                  `ERR_INVALID_CALLBACK`.
   - version: v14.0.0
     pr-url: https://github.com/nodejs/node/pull/27044
-    description: Changed 'flags' argument to 'mode' and imposed
+    description: Changed `flags` argument to `mode` and imposed
                  stricter type validation.
 -->
 
@@ -2198,6 +2285,9 @@ changes:
   * `filter` {Function} Function to filter copied files/directories. Return
     `true` to copy the item, `false` to ignore it. Can also return a `Promise`
     that resolves to `true` or `false` **Default:** `undefined`.
+    * `src` {string} source path to copy.
+    * `dest` {string} destination path to copy to.
+    * Returns: {boolean|Promise}
   * `force` {boolean} overwrite existing file or directory. The copy
     operation will ignore errors if you set this to false and the destination
     exists. Use the `errorOnExist` option to change this behavior.
@@ -4242,6 +4332,9 @@ The `atime` and `mtime` arguments follow these rules:
 <!-- YAML
 added: v0.5.10
 changes:
+  - version: v19.1.0
+    pr-url: https://github.com/nodejs/node/pull/45098
+    description: Added recursive support for Linux, AIX and IBMi.
   - version:
       - v15.9.0
       - v14.17.0
@@ -4298,10 +4391,6 @@ the returned {fs.FSWatcher}.
 
 The `fs.watch` API is not 100% consistent across platforms, and is
 unavailable in some situations.
-
-The recursive option is only supported on macOS and Windows.
-An `ERR_FEATURE_UNAVAILABLE_ON_PLATFORM` exception will be thrown
-when the option is used on a platform that does not support it.
 
 On Windows, no events will be emitted if the watched directory is moved or
 renamed. An `EPERM` error is reported when the watched directory is deleted.
@@ -4534,7 +4623,7 @@ default with the above values.
 <!-- YAML
 added: v0.11.5
 changes:
-  - version: REPLACEME
+  - version: v19.0.0
     pr-url: https://github.com/nodejs/node/pull/42796
     description: Passing to the `string` parameter an object with an own
                  `toString` function is no longer supported.
@@ -4606,7 +4695,7 @@ details.
 <!-- YAML
 added: v0.1.29
 changes:
-  - version: REPLACEME
+  - version: v19.0.0
     pr-url: https://github.com/nodejs/node/pull/42796
     description: Passing to the `string` parameter an object with an own
                  `toString` function is no longer supported.
@@ -4963,7 +5052,7 @@ added: v8.5.0
 changes:
   - version: v14.0.0
     pr-url: https://github.com/nodejs/node/pull/27044
-    description: Changed 'flags' argument to 'mode' and imposed
+    description: Changed `flags` argument to `mode` and imposed
                  stricter type validation.
 -->
 
@@ -5024,6 +5113,9 @@ changes:
     exists, throw an error. **Default:** `false`.
   * `filter` {Function} Function to filter copied files/directories. Return
     `true` to copy the item, `false` to ignore it. **Default:** `undefined`
+    * `src` {string} source path to copy.
+    * `dest` {string} destination path to copy to.
+    * Returns: {boolean}
   * `force` {boolean} overwrite existing file or directory. The copy
     operation will ignore errors if you set this to false and the destination
     exists. Use the `errorOnExist` option to change this behavior.
@@ -5848,7 +5940,7 @@ this API: [`fs.utimes()`][].
 <!-- YAML
 added: v0.1.29
 changes:
-  - version: REPLACEME
+  - version: v19.0.0
     pr-url: https://github.com/nodejs/node/pull/42796
     description: Passing to the `data` parameter an object with an own
                  `toString` function is no longer supported.
@@ -6962,7 +7054,7 @@ import { open, constants } from 'node:fs';
 const {
   O_RDWR,
   O_CREAT,
-  O_EXCL
+  O_EXCL,
 } = constants;
 
 open('/path/to/my/file', O_RDWR | O_CREAT | O_EXCL, (err, fd) => {
@@ -7553,7 +7645,7 @@ try {
 
 ### Threadpool usage
 
-All callback and promise-based file system APIs ( with the exception of
+All callback and promise-based file system APIs (with the exception of
 `fs.FSWatcher()`) use libuv's threadpool. This can have surprising and negative
 performance implications for some applications. See the
 [`UV_THREADPOOL_SIZE`][] documentation for more information.
@@ -7663,6 +7755,7 @@ the file contents.
 [`ReadDirectoryChangesW`]: https://docs.microsoft.com/en-us/windows/desktop/api/winbase/nf-winbase-readdirectorychangesw
 [`UV_THREADPOOL_SIZE`]: cli.md#uv_threadpool_sizesize
 [`event ports`]: https://illumos.org/man/port_create
+[`filehandle.createReadStream()`]: #filehandlecreatereadstreamoptions
 [`filehandle.createWriteStream()`]: #filehandlecreatewritestreamoptions
 [`filehandle.writeFile()`]: #filehandlewritefiledata-options
 [`fs.access()`]: #fsaccesspath-mode-callback

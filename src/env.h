@@ -37,6 +37,7 @@
 #include "node.h"
 #include "node_binding.h"
 #include "node_builtins.h"
+#include "node_exit_code.h"
 #include "node_main_instance.h"
 #include "node_options.h"
 #include "node_perf_common.h"
@@ -93,55 +94,10 @@ class Worker;
 
 namespace loader {
 class ModuleWrap;
-
-struct PackageConfig {
-  enum class Exists { Yes, No };
-  enum class IsValid { Yes, No };
-  enum class HasMain { Yes, No };
-  enum class HasName { Yes, No };
-  enum PackageType : uint32_t { None = 0, CommonJS, Module };
-
-  const Exists exists;
-  const IsValid is_valid;
-  const HasMain has_main;
-  const std::string main;
-  const HasName has_name;
-  const std::string name;
-  const PackageType type;
-
-  v8::Global<v8::Value> exports;
-};
 }  // namespace loader
 
 class Environment;
 class Realm;
-
-enum class FsStatsOffset {
-  kDev = 0,
-  kMode,
-  kNlink,
-  kUid,
-  kGid,
-  kRdev,
-  kBlkSize,
-  kIno,
-  kSize,
-  kBlocks,
-  kATimeSec,
-  kATimeNsec,
-  kMTimeSec,
-  kMTimeNsec,
-  kCTimeSec,
-  kCTimeNsec,
-  kBirthTimeSec,
-  kBirthTimeNsec,
-  kFsStatsFieldsNumber
-};
-
-// Stat fields buffers contain twice the number of entries in an uv_stat_t
-// because `fs.StatWatcher` needs room to store 2 `fs.Stats` instances.
-constexpr size_t kFsStatsBufferLength =
-    static_cast<size_t>(FsStatsOffset::kFsStatsFieldsNumber) * 2;
 
 // Disables zero-filling for ArrayBuffer allocations in this scope. This is
 // similar to how we implement Buffer.allocUnsafe() in JS land.
@@ -302,7 +258,8 @@ class AsyncHooks : public MemoryRetainer {
   // The `js_execution_async_resources` array contains the value in that case.
   inline v8::Local<v8::Object> native_execution_async_resource(size_t index);
 
-  void SetJSPromiseHooks(v8::Local<v8::Function> init,
+  void InstallPromiseHooks(v8::Local<v8::Context> ctx);
+  void ResetPromiseHooks(v8::Local<v8::Function> init,
                          v8::Local<v8::Function> before,
                          v8::Local<v8::Function> after,
                          v8::Local<v8::Function> resolve);
@@ -320,9 +277,6 @@ class AsyncHooks : public MemoryRetainer {
                           v8::Local<v8::Object> execution_async_resource);
   bool pop_async_context(double async_id);
   void clear_async_id_stack();  // Used in fatal exceptions.
-
-  void AddContext(v8::Local<v8::Context> ctx);
-  void RemoveContext(v8::Local<v8::Context> ctx);
 
   AsyncHooks(const AsyncHooks&) = delete;
   AsyncHooks& operator=(const AsyncHooks&) = delete;
@@ -385,8 +339,6 @@ class AsyncHooks : public MemoryRetainer {
 
   // Non-empty during deserialization
   const SerializeInfo* info_ = nullptr;
-
-  std::vector<v8::Global<v8::Context>> contexts_;
 
   std::array<v8::Global<v8::Function>, 4> js_promise_hooks_;
 };
@@ -502,19 +454,15 @@ struct DeserializeRequest {
   v8::Global<v8::Object> holder;
   int index;
   InternalFieldInfoBase* info = nullptr;  // Owned by the request
-
-  // Move constructor
-  DeserializeRequest(DeserializeRequest&& other) = default;
 };
 
 struct EnvSerializeInfo {
-  std::vector<PropInfo> native_objects;
   std::vector<std::string> builtins;
   AsyncHooks::SerializeInfo async_hooks;
   TickInfo::SerializeInfo tick_info;
   ImmediateInfo::SerializeInfo immediate_info;
   performance::PerformanceState::SerializeInfo performance_state;
-  AliasedBufferIndex exiting;
+  AliasedBufferIndex exit_info;
   AliasedBufferIndex stream_base_state;
   AliasedBufferIndex should_abort_on_uncaught_toggle;
 
@@ -569,14 +517,11 @@ struct SnapshotData {
   static bool FromBlob(SnapshotData* out, FILE* in);
 
   ~SnapshotData();
-
-  SnapshotData(const SnapshotData&) = delete;
-  SnapshotData& operator=(const SnapshotData&) = delete;
-  SnapshotData(SnapshotData&&) = delete;
-  SnapshotData& operator=(SnapshotData&&) = delete;
-
-  SnapshotData() = default;
 };
+
+void DefaultProcessExitHandlerInternal(Environment* env, ExitCode exit_code);
+v8::Maybe<ExitCode> SpinEventLoopInternal(Environment* env);
+v8::Maybe<ExitCode> EmitProcessExitInternal(Environment* env);
 
 /**
  * Environment is a per-isolate data structure that represents an execution
@@ -600,8 +545,6 @@ class Environment : public MemoryRetainer {
   void DeserializeProperties(const EnvSerializeInfo* info);
 
   void PrintInfoForSnapshotIfDebug();
-  void PrintAllBaseObjects();
-  void VerifyNoStrongBaseObjects();
   void EnqueueDeserializeRequest(DeserializeRequestCallback cb,
                                  v8::Local<v8::Object> holder,
                                  int index,
@@ -615,7 +558,7 @@ class Environment : public MemoryRetainer {
 #if HAVE_INSPECTOR
   // If the environment is created for a worker, pass parent_handle and
   // the ownership if transferred into the Environment.
-  int InitializeInspector(
+  void InitializeInspector(
       std::unique_ptr<inspector::ParentInspectorHandle> parent_handle);
 #endif
 
@@ -688,7 +631,7 @@ class Environment : public MemoryRetainer {
 
   void RegisterHandleCleanups();
   void CleanupHandles();
-  void Exit(int code);
+  void Exit(ExitCode code);
   void ExitEnv();
 
   // Register clean-up cb to be called on environment destruction.
@@ -699,9 +642,15 @@ class Environment : public MemoryRetainer {
   template <typename T, typename OnCloseCallback>
   inline void CloseHandle(T* handle, OnCloseCallback callback);
 
+  void ResetPromiseHooks(v8::Local<v8::Function> init,
+                         v8::Local<v8::Function> before,
+                         v8::Local<v8::Function> after,
+                         v8::Local<v8::Function> resolve);
   void AssignToContext(v8::Local<v8::Context> context,
                        Realm* realm,
                        const ContextInfo& info);
+  void TrackContext(v8::Local<v8::Context> context);
+  void UntrackContext(v8::Local<v8::Context> context);
 
   void StartProfilerIdleNotifier();
 
@@ -739,10 +688,12 @@ class Environment : public MemoryRetainer {
   inline void set_force_context_aware(bool value);
   inline bool force_context_aware() const;
 
-  // This is a pseudo-boolean that keeps track of whether the process is
-  // exiting.
+  // This contains fields that are a pseudo-boolean that keeps track of whether
+  // the process is exiting, an integer representing the process exit code, and
+  // a pseudo-boolean to indicate whether the exit code is undefined.
+  inline AliasedInt32Array& exit_info();
   inline void set_exiting(bool value);
-  inline AliasedUint32Array& exiting();
+  inline ExitCode exit_code(const ExitCode default_code) const;
 
   // This stores whether the --abort-on-uncaught-exception flag was passed
   // to Node.
@@ -973,19 +924,6 @@ class Environment : public MemoryRetainer {
   inline std::shared_ptr<EnvironmentOptions> options();
   inline std::shared_ptr<ExclusiveAccess<HostPort>> inspector_host_port();
 
-  // The BaseObject count is a debugging helper that makes sure that there are
-  // no memory leaks caused by BaseObjects staying alive longer than expected
-  // (in particular, no circular BaseObjectPtr references).
-  inline void modify_base_object_count(int64_t delta);
-  inline int64_t base_object_count() const;
-
-  // Base object count created in bootstrap of the principal realm.
-  // This adjusts the return value of base_object_created_after_bootstrap() so
-  // that tests that check the count do not have to account for internally
-  // created BaseObjects.
-  inline void set_base_object_created_by_bootstrap(int64_t count);
-  inline int64_t base_object_created_after_bootstrap() const;
-
   inline int32_t stack_trace_limit() const { return 10; }
 
 #if HAVE_INSPECTOR
@@ -1026,7 +964,7 @@ class Environment : public MemoryRetainer {
 
   inline void set_main_utf16(std::unique_ptr<v8::String::Value>);
   inline void set_process_exit_handler(
-      std::function<void(Environment*, int)>&& handler);
+      std::function<void(Environment*, ExitCode)>&& handler);
 
   void RunAndClearNativeImmediates(bool only_refed = false);
   void RunAndClearInterrupts();
@@ -1038,7 +976,7 @@ class Environment : public MemoryRetainer {
   void RemoveUnmanagedFd(int fd);
 
   template <typename T>
-  void ForEachBaseObject(T&& iterator);
+  void ForEachRealm(T&& iterator) const;
 
   inline void set_heap_snapshot_near_heap_limit(uint32_t limit);
   inline bool is_in_heapsnapshot_heap_limit_callback() const;
@@ -1046,6 +984,14 @@ class Environment : public MemoryRetainer {
   inline void AddHeapSnapshotNearHeapLimitCallback();
 
   inline void RemoveHeapSnapshotNearHeapLimitCallback(size_t heap_limit);
+
+  // Field identifiers for exit_info_
+  enum ExitInfoField {
+    kExiting = 0,
+    kExitCode,
+    kHasExitCode,
+    kExitInfoFieldCount
+  };
 
  private:
   inline void ThrowError(v8::Local<v8::Value> (*fun)(v8::Local<v8::String>),
@@ -1112,7 +1058,7 @@ class Environment : public MemoryRetainer {
   uint32_t script_id_counter_ = 0;
   uint32_t function_id_counter_ = 0;
 
-  AliasedUint32Array exiting_;
+  AliasedInt32Array exit_info_;
 
   AliasedUint32Array should_abort_on_uncaught_toggle_;
   int should_not_abort_scope_counter_ = 0;
@@ -1156,6 +1102,7 @@ class Environment : public MemoryRetainer {
 
   EnabledDebugList enabled_debug_list_;
 
+  std::vector<v8::Global<v8::Context>> contexts_;
   std::list<node_module> extra_linked_bindings_;
   Mutex extra_linked_bindings_mutex_;
 
@@ -1188,14 +1135,12 @@ class Environment : public MemoryRetainer {
   CleanupQueue cleanup_queue_;
   bool started_cleanup_ = false;
 
-  int64_t base_object_count_ = 0;
-  int64_t base_object_created_by_bootstrap_ = 0;
   std::atomic_bool is_stopping_ { false };
 
   std::unordered_set<int> unmanaged_fds_;
 
-  std::function<void(Environment*, int)> process_exit_handler_ {
-      DefaultProcessExitHandler };
+  std::function<void(Environment*, ExitCode)> process_exit_handler_{
+      DefaultProcessExitHandlerInternal};
 
   std::unique_ptr<Realm> principal_realm_ = nullptr;
 

@@ -27,6 +27,7 @@ namespace node {
 using v8::Array;
 using v8::ArrayBuffer;
 using v8::BackingStore;
+using v8::Boolean;
 using v8::Context;
 using v8::EscapableHandleScope;
 using v8::Integer;
@@ -87,12 +88,6 @@ void LogSecret(
   line += " " + StringBytes::hex_encode(
       reinterpret_cast<const char*>(secret), secretlen);
   keylog_cb(ssl.get(), line.c_str());
-}
-
-bool SetALPN(const SSLPointer& ssl, std::string_view alpn) {
-  return SSL_set_alpn_protos(ssl.get(),
-                             reinterpret_cast<const uint8_t*>(alpn.data()),
-                             alpn.length()) == 0;
 }
 
 MaybeLocal<Value> GetSSLOCSPResponse(
@@ -992,17 +987,16 @@ static MaybeLocal<Value> GetX509NameObject(Environment* env, X509* cert) {
     if (value_str_size < 0) {
       return Undefined(env->isolate());
     }
+    auto free_value_str = OnScopeLeave([&]() { OPENSSL_free(value_str); });
 
     Local<String> v8_value;
     if (!String::NewFromUtf8(env->isolate(),
                              reinterpret_cast<const char*>(value_str),
                              NewStringType::kNormal,
-                             value_str_size).ToLocal(&v8_value)) {
-      OPENSSL_free(value_str);
+                             value_str_size)
+             .ToLocal(&v8_value)) {
       return MaybeLocal<Value>();
     }
-
-    OPENSSL_free(value_str);
 
     // For backward compatibility, we only create arrays if multiple values
     // exist for the same key. That is not great but there is not much we can
@@ -1267,6 +1261,8 @@ MaybeLocal<Object> X509ToObject(
   BIOPointer bio(BIO_new(BIO_s_mem()));
   CHECK(bio);
 
+  // X509_check_ca() returns a range of values. Only 1 means "is a CA"
+  auto is_ca = Boolean::New(env->isolate(), 1 == X509_check_ca(cert));
   if (!Set<Value>(context,
                   info,
                   env->subject_string(),
@@ -1282,7 +1278,8 @@ MaybeLocal<Object> X509ToObject(
       !Set<Value>(context,
                   info,
                   env->infoaccess_string(),
-                  GetInfoAccessString(env, bio, cert))) {
+                  GetInfoAccessString(env, bio, cert)) ||
+      !Set<Boolean>(context, info, env->ca_string(), is_ca)) {
     return MaybeLocal<Object>();
   }
 

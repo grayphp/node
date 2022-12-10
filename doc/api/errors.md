@@ -1325,6 +1325,12 @@ When using [`fs.cp()`][], `src` or `dest` pointed to an invalid path.
 
 <a id="ERR_FS_CP_FIFO_PIPE"></a>
 
+### `ERR_HTTP_CONTENT_LENGTH_MISMATCH`
+
+Response body size doesn't match with the specified content-length header value.
+
+<a id="ERR_HTTP_CONTENT_LENGTH_MISMATCH"></a>
+
 ### `ERR_FS_CP_FIFO_PIPE`
 
 <!--
@@ -1960,6 +1966,12 @@ An invalid HTTP token was supplied.
 ### `ERR_INVALID_IP_ADDRESS`
 
 An IP address is not valid.
+
+<a id="ERR_INVALID_MIME_SYNTAX"></a>
+
+### `ERR_INVALID_MIME_SYNTAX`
+
+The syntax of a MIME is not valid.
 
 <a id="ERR_INVALID_MODULE"></a>
 
@@ -2677,6 +2689,25 @@ reports.
 An unspecified or non-specific system error has occurred within the Node.js
 process. The error object will have an `err.info` object property with
 additional details.
+
+<a id="ERR_TAP_LEXER_ERROR"></a>
+
+### `ERR_TAP_LEXER_ERROR`
+
+An error representing a failing lexer state.
+
+<a id="ERR_TAP_PARSER_ERROR"></a>
+
+### `ERR_TAP_PARSER_ERROR`
+
+An error representing a failing parser state. Additional information about
+the token causing the error is available via the `cause` property.
+
+<a id="ERR_TAP_VALIDATION_ERROR"></a>
+
+### `ERR_TAP_VALIDATION_ERROR`
+
+This error represents a failed TAP validation.
 
 <a id="ERR_TEST_FAILURE"></a>
 

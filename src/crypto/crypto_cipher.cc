@@ -803,7 +803,11 @@ CipherBase::UpdateResult CipherBase::Update(
   if (kind_ == kDecipher && IsAuthenticatedMode())
     CHECK(MaybePassAuthTagToOpenSSL());
 
-  int buf_len = len + EVP_CIPHER_CTX_block_size(ctx_.get());
+  const int block_size = EVP_CIPHER_CTX_block_size(ctx_.get());
+  CHECK_GT(block_size, 0);
+  if (len + block_size > INT_MAX) return kErrorState;
+  int buf_len = len + block_size;
+
   // For key wrapping algorithms, get output size by calling
   // EVP_CipherUpdate() with null output.
   if (kind_ == kCipher && mode == EVP_CIPH_WRAP_MODE &&
@@ -987,17 +991,7 @@ bool PublicKeyCipher::Cipher(
       return false;
   }
 
-  if (oaep_label.size() != 0) {
-    // OpenSSL takes ownership of the label, so we need to create a copy.
-    void* label = OPENSSL_memdup(oaep_label.data(), oaep_label.size());
-    CHECK_NOT_NULL(label);
-    if (0 >= EVP_PKEY_CTX_set0_rsa_oaep_label(ctx.get(),
-                     static_cast<unsigned char*>(label),
-                                      oaep_label.size())) {
-      OPENSSL_free(label);
-      return false;
-    }
-  }
+  if (!SetRsaOaepLabel(ctx, oaep_label.ToByteSource())) return false;
 
   size_t out_len = 0;
   if (EVP_PKEY_cipher(

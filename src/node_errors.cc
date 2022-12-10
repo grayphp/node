@@ -495,10 +495,10 @@ void OnFatalError(const char* location, const char* message) {
   ABORT();
 }
 
-void OOMErrorHandler(const char* location, bool is_heap_oom) {
+void OOMErrorHandler(const char* location, const v8::OOMDetails& details) {
   const char* message =
-      is_heap_oom ? "Allocation failed - JavaScript heap out of memory"
-                  : "Allocation failed - process out of memory";
+      details.is_heap_oom ? "Allocation failed - JavaScript heap out of memory"
+                          : "Allocation failed - process out of memory";
   if (location) {
     FPrintF(stderr, "FATAL ERROR: %s %s\n", location, message);
   } else {
@@ -569,7 +569,7 @@ TryCatchScope::~TryCatchScope() {
     if (message.IsEmpty())
       message = Exception::CreateMessage(env_->isolate(), exception);
     ReportFatalException(env_, exception, message, enhance);
-    env_->Exit(7);
+    env_->Exit(ExitCode::kExceptionInFatalExceptionHandler);
   }
 }
 
@@ -1019,6 +1019,17 @@ void Initialize(Local<Object> target,
       context, target, "noSideEffectsToString", NoSideEffectsToString);
   SetMethod(
       context, target, "triggerUncaughtException", TriggerUncaughtException);
+
+  Isolate* isolate = context->GetIsolate();
+  Local<Object> exit_codes = Object::New(isolate);
+  READONLY_PROPERTY(target, "exitCodes", exit_codes);
+
+#define V(Name, Code)                                                          \
+  constexpr int k##Name = static_cast<int>(ExitCode::k##Name);                 \
+  NODE_DEFINE_CONSTANT(exit_codes, k##Name);
+
+  EXIT_CODE_LIST(V)
+#undef V
 }
 
 void DecorateErrorStack(Environment* env,
@@ -1094,7 +1105,7 @@ void TriggerUncaughtException(Isolate* isolate,
   if (!fatal_exception_function->IsFunction()) {
     ReportFatalException(
         env, error, message, EnhanceFatalException::kDontEnhance);
-    env->Exit(6);
+    env->Exit(ExitCode::kInvalidFatalExceptionMonkeyPatching);
     return;
   }
 
@@ -1140,15 +1151,8 @@ void TriggerUncaughtException(Isolate* isolate,
   RunAtExit(env);
 
   // If the global uncaught exception handler sets process.exitCode,
-  // exit with that code. Otherwise, exit with 1.
-  Local<String> exit_code = env->exit_code_string();
-  Local<Value> code;
-  if (process_object->Get(env->context(), exit_code).ToLocal(&code) &&
-      code->IsInt32()) {
-    env->Exit(code.As<Int32>()->Value());
-  } else {
-    env->Exit(1);
-  }
+  // exit with that code. Otherwise, exit with `ExitCode::kGenericUserError`.
+  env->Exit(env->exit_code(ExitCode::kGenericUserError));
 }
 
 void TriggerUncaughtException(Isolate* isolate, const v8::TryCatch& try_catch) {
@@ -1176,5 +1180,6 @@ void TriggerUncaughtException(Isolate* isolate, const v8::TryCatch& try_catch) {
 
 }  // namespace node
 
-NODE_MODULE_CONTEXT_AWARE_INTERNAL(errors, node::errors::Initialize)
-NODE_MODULE_EXTERNAL_REFERENCE(errors, node::errors::RegisterExternalReferences)
+NODE_BINDING_CONTEXT_AWARE_INTERNAL(errors, node::errors::Initialize)
+NODE_BINDING_EXTERNAL_REFERENCE(errors,
+                                node::errors::RegisterExternalReferences)
