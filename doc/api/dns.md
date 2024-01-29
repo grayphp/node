@@ -167,9 +167,9 @@ section if a custom port is used.
 
 ```js
 [
-  '4.4.4.4',
+  '8.8.8.8',
   '2001:4860:4860::8888',
-  '4.4.4.4:1053',
+  '8.8.8.8:1053',
   '[2001:4860:4860::8888]:1053',
 ]
 ```
@@ -773,6 +773,10 @@ one of the [DNS error codes][].
 added:
   - v16.4.0
   - v14.18.0
+changes:
+  - version: v17.0.0
+    pr-url: https://github.com/nodejs/node/pull/39987
+    description: Changed default value to `verbatim`.
 -->
 
 * `order` {string} must be `'ipv4first'` or `'verbatim'`.
@@ -783,10 +787,24 @@ Set the default value of `verbatim` in [`dns.lookup()`][] and
 * `ipv4first`: sets default `verbatim` `false`.
 * `verbatim`: sets default `verbatim` `true`.
 
-The default is `ipv4first` and [`dns.setDefaultResultOrder()`][] have higher
+The default is `verbatim` and [`dns.setDefaultResultOrder()`][] have higher
 priority than [`--dns-result-order`][]. When using [worker threads][],
 [`dns.setDefaultResultOrder()`][] from the main thread won't affect the default
 dns orders in workers.
+
+## `dns.getDefaultResultOrder()`
+
+<!-- YAML
+added:
+  - v20.1.0
+  - v18.17.0
+-->
+
+Get the default value for `verbatim` in [`dns.lookup()`][] and
+[`dnsPromises.lookup()`][]. The value could be:
+
+* `ipv4first`: for `verbatim` defaulting to `false`.
+* `verbatim`: for `verbatim` defaulting to `true`.
 
 ## `dns.setServers(servers)`
 
@@ -802,9 +820,9 @@ addresses. If the port is the IANA default DNS port (53) it can be omitted.
 
 ```js
 dns.setServers([
-  '4.4.4.4',
+  '8.8.8.8',
   '[2001:4860:4860::8888]',
-  '4.4.4.4:1053',
+  '8.8.8.8:1053',
   '[2001:4860:4860::8888]:1053',
 ]);
 ```
@@ -919,9 +937,9 @@ section if a custom port is used.
 
 ```js
 [
-  '4.4.4.4',
+  '8.8.8.8',
   '2001:4860:4860::8888',
-  '4.4.4.4:1053',
+  '8.8.8.8:1053',
   '[2001:4860:4860::8888]:1053',
 ]
 ```
@@ -1328,6 +1346,10 @@ is one of the [DNS error codes][].
 added:
   - v16.4.0
   - v14.18.0
+changes:
+  - version: v17.0.0
+    pr-url: https://github.com/nodejs/node/pull/39987
+    description: Changed default value to `verbatim`.
 -->
 
 * `order` {string} must be `'ipv4first'` or `'verbatim'`.
@@ -1338,10 +1360,20 @@ Set the default value of `verbatim` in [`dns.lookup()`][] and
 * `ipv4first`: sets default `verbatim` `false`.
 * `verbatim`: sets default `verbatim` `true`.
 
-The default is `ipv4first` and [`dnsPromises.setDefaultResultOrder()`][] have
+The default is `verbatim` and [`dnsPromises.setDefaultResultOrder()`][] have
 higher priority than [`--dns-result-order`][]. When using [worker threads][],
 [`dnsPromises.setDefaultResultOrder()`][] from the main thread won't affect the
 default dns orders in workers.
+
+### `dnsPromises.getDefaultResultOrder()`
+
+<!-- YAML
+added:
+  - v20.1.0
+  - v18.17.0
+-->
+
+Get the value of `dnsOrder`.
 
 ### `dnsPromises.setServers(servers)`
 
@@ -1357,9 +1389,9 @@ addresses. If the port is the IANA default DNS port (53) it can be omitted.
 
 ```js
 dnsPromises.setServers([
-  '4.4.4.4',
+  '8.8.8.8',
   '[2001:4860:4860::8888]',
-  '4.4.4.4:1053',
+  '8.8.8.8:1053',
   '[2001:4860:4860::8888]:1053',
 ]);
 ```

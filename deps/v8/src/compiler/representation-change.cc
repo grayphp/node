@@ -253,6 +253,7 @@ Node* RepresentationChanger::GetRepresentationFor(
     case MachineRepresentation::kCompressed:
     case MachineRepresentation::kCompressedPointer:
     case MachineRepresentation::kSandboxedPointer:
+    case MachineRepresentation::kIndirectPointer:
     case MachineRepresentation::kMapWord:
       UNREACHABLE();
   }
@@ -947,7 +948,7 @@ Node* RepresentationChanger::GetWord32RepresentationFor(
     } else if (output_type.Is(Type::Unsigned32())) {
       op = simplified()->ChangeTaggedToUint32();
     } else if (use_info.truncation().IsUsedAsWord32()) {
-      if (output_type.Is(Type::NumberOrOddball())) {
+      if (output_type.Is(Type::NumberOrOddballOrHole())) {
         op = simplified()->TruncateTaggedToWord32();
       } else if (use_info.type_check() == TypeCheckKind::kNumber) {
         op = simplified()->CheckedTruncateTaggedToWord32(
@@ -1044,12 +1045,11 @@ Node* RepresentationChanger::GetBitRepresentationFor(
       HeapObjectMatcher m(node);
       if (m.Is(factory()->false_value())) {
         return InsertTypeOverrideForVerifier(
-            Type::Constant(broker_, factory()->false_value(),
-                           jsgraph()->zone()),
+            Type::Constant(broker_, broker_->false_value(), jsgraph()->zone()),
             jsgraph()->Int32Constant(0));
       } else if (m.Is(factory()->true_value())) {
         return InsertTypeOverrideForVerifier(
-            Type::Constant(broker_, factory()->true_value(), jsgraph()->zone()),
+            Type::Constant(broker_, broker_->true_value(), jsgraph()->zone()),
             jsgraph()->Int32Constant(1));
       }
       break;
@@ -1197,7 +1197,9 @@ Node* RepresentationChanger::GetWord64RepresentationFor(
                        MachineRepresentation::kWord64);
     }
   } else if (output_rep == MachineRepresentation::kFloat32) {
-    if (output_type.Is(cache_->kDoubleRepresentableInt64)) {
+    if (output_type.Is(cache_->kDoubleRepresentableInt64) ||
+        (output_type.Is(cache_->kDoubleRepresentableInt64OrMinusZero) &&
+         use_info.truncation().IdentifiesZeroAndMinusZero())) {
       // float32 -> float64 -> int64
       node = InsertChangeFloat32ToFloat64(node);
       op = machine()->ChangeFloat64ToInt64();
@@ -1219,7 +1221,9 @@ Node* RepresentationChanger::GetWord64RepresentationFor(
                        MachineRepresentation::kWord64);
     }
   } else if (output_rep == MachineRepresentation::kFloat64) {
-    if (output_type.Is(cache_->kDoubleRepresentableInt64)) {
+    if (output_type.Is(cache_->kDoubleRepresentableInt64) ||
+        (output_type.Is(cache_->kDoubleRepresentableInt64OrMinusZero) &&
+         use_info.truncation().IdentifiesZeroAndMinusZero())) {
       op = machine()->ChangeFloat64ToInt64();
     } else if (output_type.Is(cache_->kDoubleRepresentableUint64)) {
       op = machine()->ChangeFloat64ToUint64();
@@ -1250,7 +1254,9 @@ Node* RepresentationChanger::GetWord64RepresentationFor(
                                              use_node, use_info);
     op = simplified()->TruncateBigIntToWord64();
   } else if (CanBeTaggedPointer(output_rep)) {
-    if (output_type.Is(cache_->kDoubleRepresentableInt64)) {
+    if (output_type.Is(cache_->kDoubleRepresentableInt64) ||
+        (output_type.Is(cache_->kDoubleRepresentableInt64OrMinusZero) &&
+         use_info.truncation().IdentifiesZeroAndMinusZero())) {
       op = simplified()->ChangeTaggedToInt64();
     } else if (use_info.type_check() == TypeCheckKind::kSigned64) {
       op = simplified()->CheckedTaggedToInt64(
@@ -1371,6 +1377,18 @@ const Operator* RepresentationChanger::Int64OperatorFor(
       return machine()->Int64Sub();
     case IrOpcode::kSpeculativeBigIntMultiply:
       return machine()->Int64Mul();
+    case IrOpcode::kSpeculativeBigIntBitwiseAnd:
+      return machine()->Word64And();
+    case IrOpcode::kSpeculativeBigIntBitwiseOr:
+      return machine()->Word64Or();
+    case IrOpcode::kSpeculativeBigIntBitwiseXor:
+      return machine()->Word64Xor();
+    case IrOpcode::kSpeculativeBigIntEqual:
+      return machine()->Word64Equal();
+    case IrOpcode::kSpeculativeBigIntLessThan:
+      return machine()->Int64LessThan();
+    case IrOpcode::kSpeculativeBigIntLessThanOrEqual:
+      return machine()->Int64LessThanOrEqual();
     default:
       UNREACHABLE();
   }
@@ -1407,6 +1425,22 @@ const Operator* RepresentationChanger::BigIntOperatorFor(
       return simplified()->BigIntDivide();
     case IrOpcode::kSpeculativeBigIntModulus:
       return simplified()->BigIntModulus();
+    case IrOpcode::kSpeculativeBigIntBitwiseAnd:
+      return simplified()->BigIntBitwiseAnd();
+    case IrOpcode::kSpeculativeBigIntBitwiseOr:
+      return simplified()->BigIntBitwiseOr();
+    case IrOpcode::kSpeculativeBigIntBitwiseXor:
+      return simplified()->BigIntBitwiseXor();
+    case IrOpcode::kSpeculativeBigIntShiftLeft:
+      return simplified()->BigIntShiftLeft();
+    case IrOpcode::kSpeculativeBigIntShiftRight:
+      return simplified()->BigIntShiftRight();
+    case IrOpcode::kSpeculativeBigIntEqual:
+      return simplified()->BigIntEqual();
+    case IrOpcode::kSpeculativeBigIntLessThan:
+      return simplified()->BigIntLessThan();
+    case IrOpcode::kSpeculativeBigIntLessThanOrEqual:
+      return simplified()->BigIntLessThanOrEqual();
     default:
       UNREACHABLE();
   }

@@ -262,6 +262,7 @@ class MetricsRecorder : public v8::metrics::Recorder {
 };
 
 COMPILE_TEST(TestEventMetrics) {
+  if (v8_flags.memory_balancer) return;
   FlagScope<bool> no_wasm_dynamic_tiering(&v8_flags.wasm_dynamic_tiering,
                                           false);
   std::shared_ptr<MetricsRecorder> recorder =
@@ -278,7 +279,7 @@ COMPILE_TEST(TestEventMetrics) {
   WasmModuleBuilder* builder = zone.New<WasmModuleBuilder>(&zone);
   WasmFunctionBuilder* f = builder->AddFunction(sigs.i_v());
   f->builder()->AddExport(base::CStrVector("main"), f);
-  byte code[] = {WASM_I32V_2(0)};
+  uint8_t code[] = {WASM_I32V_2(0)};
   f->EmitCode(code, sizeof(code));
   f->Emit(kExprEnd);
   ZoneBuffer buffer(&zone);
@@ -312,9 +313,6 @@ COMPILE_TEST(TestEventMetrics) {
            recorder->module_decoded_.back().module_size_in_bytes);
   CHECK_EQ(1, recorder->module_decoded_.back().function_count);
   CHECK_LE(0, recorder->module_decoded_.back().wall_clock_duration_in_us);
-  CHECK_IMPLIES(
-      v8::base::ThreadTicks::IsSupported() && !i::v8_flags.wasm_test_streaming,
-      recorder->module_decoded_.back().cpu_duration_in_us > 0);
 
   CHECK_EQ(1, recorder->module_compiled_.size());
   CHECK(recorder->module_compiled_.back().success);
@@ -335,12 +333,6 @@ COMPILE_TEST(TestEventMetrics) {
   CHECK_GE(native_module->generated_code_size(),
            recorder->module_compiled_.back().code_size_in_bytes);
   CHECK_LE(0, recorder->module_compiled_.back().wall_clock_duration_in_us);
-  CHECK_EQ(native_module->baseline_compilation_cpu_duration(),
-           recorder->module_compiled_.back().cpu_duration_in_us);
-  CHECK_IMPLIES(v8::base::ThreadTicks::IsSupported() &&
-                    !i::v8_flags.wasm_test_streaming &&
-                    !i::v8_flags.wasm_lazy_compilation,
-                recorder->module_compiled_.back().cpu_duration_in_us > 0);
 
   CHECK_EQ(1, recorder->module_instantiated_.size());
   CHECK(recorder->module_instantiated_.back().success);

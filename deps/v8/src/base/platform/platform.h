@@ -65,6 +65,10 @@ extern "C" unsigned long __readfsdword(unsigned long);  // NOLINT(runtime/int)
 
 namespace v8 {
 
+namespace internal {
+class HandleHelper;
+}
+
 namespace base {
 
 // ----------------------------------------------------------------------------
@@ -157,6 +161,9 @@ class V8_BASE_EXPORT OS {
   // strive for high-precision timer resolution, preferable
   // micro-second resolution.
   static int GetUserTime(uint32_t* secs,  uint32_t* usecs);
+
+  // Obtain the peak memory usage in kilobytes
+  static int GetPeakMemoryUsageKb();
 
   // Returns current time as the number of milliseconds since
   // 00:00:00 UTC, January 1, 1970.
@@ -316,7 +323,7 @@ class V8_BASE_EXPORT OS {
   // Whether the platform supports mapping a given address in another location
   // in the address space.
   V8_WARN_UNUSED_RESULT static constexpr bool IsRemapPageSupported() {
-#if (defined(V8_OS_MACOS) || defined(V8_OS_LINUX)) && \
+#if (defined(V8_OS_DARWIN) || defined(V8_OS_LINUX)) && \
     !(defined(V8_TARGET_ARCH_PPC64) || defined(V8_TARGET_ARCH_S390X))
     return true;
 #else
@@ -519,18 +526,26 @@ class V8_BASE_EXPORT Thread {
   using LocalStorageKey = int32_t;
 #endif
 
+  // Priority class for the thread. Use kDefault to keep the priority
+  // unchanged.
+  enum class Priority { kBestEffort, kUserVisible, kUserBlocking, kDefault };
+
   class Options {
    public:
-    Options() : name_("v8:<unknown>"), stack_size_(0) {}
+    Options() : Options("v8:<unknown>") {}
     explicit Options(const char* name, int stack_size = 0)
-        : name_(name), stack_size_(stack_size) {}
+        : Options(name, Priority::kDefault, stack_size) {}
+    Options(const char* name, Priority priority, int stack_size = 0)
+        : name_(name), priority_(priority), stack_size_(stack_size) {}
 
     const char* name() const { return name_; }
     int stack_size() const { return stack_size_; }
+    Priority priority() const { return priority_; }
 
    private:
     const char* name_;
-    int stack_size_;
+    const Priority priority_;
+    const int stack_size_;
   };
 
   // Create new thread.
@@ -590,6 +605,7 @@ class V8_BASE_EXPORT Thread {
 
   class PlatformData;
   PlatformData* data() { return data_; }
+  Priority priority() const { return priority_; }
 
   void NotifyStartedAndRun() {
     if (start_semaphore_) start_semaphore_->Signal();
@@ -603,6 +619,7 @@ class V8_BASE_EXPORT Thread {
 
   char name_[kMaxThreadNameLength];
   int stack_size_;
+  Priority priority_;
   Semaphore* start_semaphore_;
 };
 
@@ -654,13 +671,24 @@ class V8_BASE_EXPORT Stack {
     constexpr size_t kAsanRealFrameOffsetBytes = 32;
     void* real_frame = __asan_addr_is_in_fake_stack(
         __asan_get_current_fake_stack(), slot, nullptr, nullptr);
-    return real_frame
-               ? (static_cast<char*>(real_frame) + kAsanRealFrameOffsetBytes)
-               : slot;
+    return real_frame ? StackSlot(static_cast<char*>(real_frame) +
+                                  kAsanRealFrameOffsetBytes)
+                      : slot;
 #endif  // V8_USE_ADDRESS_SANITIZER
     return slot;
   }
+
+ private:
+  // Return the current thread stack start pointer.
+  static StackSlot GetStackStartUnchecked();
+  static Stack::StackSlot ObtainCurrentThreadStackStart();
+
+  friend v8::internal::HandleHelper;
 };
+
+#if V8_HAS_PTHREAD_JIT_WRITE_PROTECT
+V8_BASE_EXPORT void SetJitWriteProtected(int enable);
+#endif
 
 }  // namespace base
 }  // namespace v8

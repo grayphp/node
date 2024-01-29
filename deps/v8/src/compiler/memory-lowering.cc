@@ -5,6 +5,7 @@
 #include "src/compiler/memory-lowering.h"
 
 #include "src/codegen/interface-descriptors-inl.h"
+#include "src/common/globals.h"
 #include "src/compiler/js-graph.h"
 #include "src/compiler/linkage.h"
 #include "src/compiler/node-matchers.h"
@@ -157,18 +158,19 @@ Node* MemoryLowering::AlignToAllocationAlignment(Node* value) {
   return already_aligned.PhiAt(0);
 }
 
-Reduction MemoryLowering::ReduceAllocateRaw(
-    Node* node, AllocationType allocation_type,
-    AllowLargeObjects allow_large_objects, AllocationState const** state_ptr) {
+Reduction MemoryLowering::ReduceAllocateRaw(Node* node,
+                                            AllocationType allocation_type,
+                                            AllocationState const** state_ptr) {
   DCHECK_EQ(IrOpcode::kAllocateRaw, node->opcode());
   DCHECK_IMPLIES(allocation_folding_ == AllocationFolding::kDoAllocationFolding,
                  state_ptr != nullptr);
   if (v8_flags.single_generation && allocation_type == AllocationType::kYoung) {
     allocation_type = AllocationType::kOld;
   }
-  // Code objects may have a maximum size smaller than kMaxHeapObjectSize due to
-  // guard pages. If we need to support allocating code here we would need to
-  // call MemoryChunkLayout::MaxRegularCodeObjectSize() at runtime.
+  // InstructionStream objects may have a maximum size smaller than
+  // kMaxHeapObjectSize due to guard pages. If we need to support allocating
+  // code here we would need to call
+  // MemoryChunkLayout::MaxRegularCodeObjectSize() at runtime.
   DCHECK_NE(allocation_type, AllocationType::kCode);
   Node* value;
   Node* size = node->InputAt(0);
@@ -180,17 +182,9 @@ Reduction MemoryLowering::ReduceAllocateRaw(
   Node* allocate_builtin;
   if (isolate_ != nullptr) {
     if (allocation_type == AllocationType::kYoung) {
-      if (allow_large_objects == AllowLargeObjects::kTrue) {
-        allocate_builtin = __ AllocateInYoungGenerationStubConstant();
-      } else {
-        allocate_builtin = __ AllocateRegularInYoungGenerationStubConstant();
-      }
+      allocate_builtin = __ AllocateInYoungGenerationStubConstant();
     } else {
-      if (allow_large_objects == AllowLargeObjects::kTrue) {
-        allocate_builtin = __ AllocateInOldGenerationStubConstant();
-      } else {
-        allocate_builtin = __ AllocateRegularInOldGenerationStubConstant();
-      }
+      allocate_builtin = __ AllocateInOldGenerationStubConstant();
     }
   } else {
     // This lowering is used by Wasm, where we compile isolate-independent
@@ -199,17 +193,9 @@ Reduction MemoryLowering::ReduceAllocateRaw(
 #if V8_ENABLE_WEBASSEMBLY
     Builtin builtin;
     if (allocation_type == AllocationType::kYoung) {
-      if (allow_large_objects == AllowLargeObjects::kTrue) {
-        builtin = Builtin::kAllocateInYoungGeneration;
-      } else {
-        builtin = Builtin::kAllocateRegularInYoungGeneration;
-      }
+      builtin = Builtin::kAllocateInYoungGeneration;
     } else {
-      if (allow_large_objects == AllowLargeObjects::kTrue) {
-        builtin = Builtin::kAllocateInOldGeneration;
-      } else {
-        builtin = Builtin::kAllocateRegularInOldGeneration;
-      }
+      builtin = Builtin::kAllocateInOldGeneration;
     }
     static_assert(std::is_same<Smi, BuiltinPtr>(), "BuiltinPtr must be Smi");
     allocate_builtin =
@@ -370,11 +356,9 @@ Reduction MemoryLowering::ReduceAllocateRaw(
     // Check if we can do bump pointer allocation here.
     Node* check = __ UintLessThan(new_top, limit);
     __ GotoIfNot(check, &call_runtime);
-    if (allow_large_objects == AllowLargeObjects::kTrue) {
-      __ GotoIfNot(
-          __ UintLessThan(size, __ IntPtrConstant(kMaxRegularHeapObjectSize)),
-          &call_runtime);
-    }
+    __ GotoIfNot(
+        __ UintLessThan(size, __ IntPtrConstant(kMaxRegularHeapObjectSize)),
+        &call_runtime);
     __ Store(StoreRepresentation(MachineType::PointerRepresentation(),
                                  kNoWriteBarrier),
              top_address, __ IntPtrConstant(0), new_top);
@@ -440,56 +424,56 @@ Reduction MemoryLowering::ReduceLoadExternalPointerField(Node* node) {
 
 #ifdef V8_ENABLE_SANDBOX
   ExternalPointerTag tag = access.external_pointer_tag;
-  if (IsSandboxedExternalPointerType(tag)) {
-    // Fields for sandboxed external pointer contain a 32-bit handle, not a
-    // 64-bit raw pointer.
-    NodeProperties::ChangeOp(node, machine()->Load(MachineType::Uint32()));
+  DCHECK_NE(tag, kExternalPointerNullTag);
+  // Fields for sandboxed external pointer contain a 32-bit handle, not a
+  // 64-bit raw pointer.
+  NodeProperties::ChangeOp(node, machine()->Load(MachineType::Uint32()));
 
-    Node* effect = NodeProperties::GetEffectInput(node);
-    Node* control = NodeProperties::GetControlInput(node);
-    __ InitializeEffectControl(effect, control);
+  Node* effect = NodeProperties::GetEffectInput(node);
+  Node* control = NodeProperties::GetControlInput(node);
+  __ InitializeEffectControl(effect, control);
 
-    // Clone the load node and put it here.
-    // TODO(turbofan): consider adding GraphAssembler::Clone() suitable for
-    // cloning nodes from arbitrary locations in effect/control chains.
-    static_assert(kExternalPointerIndexShift > kSystemPointerSizeLog2);
-    Node* handle = __ AddNode(graph()->CloneNode(node));
-    Node* shift_amount =
-        __ Int32Constant(kExternalPointerIndexShift - kSystemPointerSizeLog2);
-    Node* offset = __ Word32Shr(handle, shift_amount);
+  // Clone the load node and put it here.
+  // TODO(turbofan): consider adding GraphAssembler::Clone() suitable for
+  // cloning nodes from arbitrary locations in effect/control chains.
+  static_assert(kExternalPointerIndexShift > kSystemPointerSizeLog2);
+  Node* handle = __ AddNode(graph()->CloneNode(node));
+  Node* shift_amount =
+      __ Int32Constant(kExternalPointerIndexShift - kSystemPointerSizeLog2);
+  Node* offset = __ Word32Shr(handle, shift_amount);
 
-    // Uncomment this to generate a breakpoint for debugging purposes.
-    // __ DebugBreak();
+  // Uncomment this to generate a breakpoint for debugging purposes.
+  // __ DebugBreak();
 
-    // Decode loaded external pointer.
-    //
-    // Here we access the external pointer table through an ExternalReference.
-    // Alternatively, we could also hardcode the address of the table since it
-    // is never reallocated. However, in that case we must be able to guarantee
-    // that the generated code is never executed under a different Isolate, as
-    // that would allow access to external objects from different Isolates. It
-    // also would break if the code is serialized/deserialized at some point.
-    Node* table_address =
-        IsSharedExternalPointerType(tag)
-            ? __
-              Load(MachineType::Pointer(),
-                   __ ExternalConstant(
-                       ExternalReference::
-                           shared_external_pointer_table_address_address(
-                               isolate())),
-                   __ IntPtrConstant(0))
-            : __ ExternalConstant(
-                  ExternalReference::external_pointer_table_address(isolate()));
-    Node* table = __ Load(MachineType::Pointer(), table_address,
-                          Internals::kExternalPointerTableBufferOffset);
-    Node* pointer =
-        __ Load(MachineType::Pointer(), table, __ ChangeUint32ToUint64(offset));
-    pointer = __ WordAnd(pointer, __ IntPtrConstant(~tag));
-    return Replace(pointer);
-  }
-#endif
+  // Decode loaded external pointer.
+  //
+  // Here we access the external pointer table through an ExternalReference.
+  // Alternatively, we could also hardcode the address of the table since it
+  // is never reallocated. However, in that case we must be able to guarantee
+  // that the generated code is never executed under a different Isolate, as
+  // that would allow access to external objects from different Isolates. It
+  // also would break if the code is serialized/deserialized at some point.
+  Node* table_address =
+      IsSharedExternalPointerType(tag)
+          ? __
+            Load(MachineType::Pointer(),
+                 __ ExternalConstant(
+                     ExternalReference::
+                         shared_external_pointer_table_address_address(
+                             isolate())),
+                 __ IntPtrConstant(0))
+          : __ ExternalConstant(
+                ExternalReference::external_pointer_table_address(isolate()));
+  Node* table = __ Load(MachineType::Pointer(), table_address,
+                        Internals::kExternalPointerTableBasePointerOffset);
+  Node* pointer =
+      __ Load(MachineType::Pointer(), table, __ ChangeUint32ToUint64(offset));
+  pointer = __ WordAnd(pointer, __ IntPtrConstant(~tag));
+  return Replace(pointer);
+#else
   NodeProperties::ChangeOp(node, machine()->Load(access.machine_type));
   return Changed(node);
+#endif  // V8_ENABLE_SANDBOX
 }
 
 Reduction MemoryLowering::ReduceLoadBoundedSize(Node* node) {
@@ -595,8 +579,9 @@ Reduction MemoryLowering::ReduceStoreField(Node* node,
                                            AllocationState const* state) {
   DCHECK_EQ(IrOpcode::kStoreField, node->opcode());
   FieldAccess const& access = FieldAccessOf(node->op());
-  // External pointer must never be stored by optimized code.
-  DCHECK(!access.type.Is(Type::ExternalPointer()));
+  // External pointer must never be stored by optimized code when sandbox is
+  // turned on
+  DCHECK(!access.type.Is(Type::ExternalPointer()) || !V8_ENABLE_SANDBOX_BOOL);
   // SandboxedPointers are not currently stored by optimized code.
   DCHECK(!access.type.Is(Type::SandboxedPointer()));
   // Bounded size fields are not currently stored by optimized code.
@@ -621,9 +606,21 @@ Reduction MemoryLowering::ReduceStoreField(Node* node,
     node->ReplaceInput(2, mapword);
 #endif
   }
-  NodeProperties::ChangeOp(
-      node, machine()->Store(StoreRepresentation(machine_type.representation(),
-                                                 write_barrier_kind)));
+  if (machine_type.representation() ==
+      MachineRepresentation::kIndirectPointer) {
+    // Indirect pointer stores require knowledge of the indirect pointer tag of
+    // the field. This is technically only required for stores that need a
+    // write barrier, but currently we track the tag for all such stores.
+    DCHECK_NE(access.indirect_pointer_tag, kIndirectPointerNullTag);
+    Node* tag = __ IntPtrConstant(access.indirect_pointer_tag);
+    node->InsertInput(graph_zone(), 3, tag);
+    NodeProperties::ChangeOp(
+        node, machine()->StoreIndirectPointer(write_barrier_kind));
+  } else {
+    NodeProperties::ChangeOp(
+        node, machine()->Store(StoreRepresentation(
+                  machine_type.representation(), write_barrier_kind)));
+  }
   return Changed(node);
 }
 
@@ -687,8 +684,7 @@ bool ValueNeedsWriteBarrier(Node* value, Isolate* isolate) {
 Reduction MemoryLowering::ReduceAllocateRaw(Node* node) {
   DCHECK_EQ(IrOpcode::kAllocateRaw, node->opcode());
   const AllocateParameters& allocation = AllocateParametersOf(node->op());
-  return ReduceAllocateRaw(node, allocation.allocation_type(),
-                           allocation.allow_large_objects(), nullptr);
+  return ReduceAllocateRaw(node, allocation.allocation_type(), nullptr);
 }
 
 WriteBarrierKind MemoryLowering::ComputeWriteBarrierKind(

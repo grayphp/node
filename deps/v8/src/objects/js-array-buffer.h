@@ -72,9 +72,6 @@ class JSArrayBuffer
   // [was_detached]: true => the buffer was previously detached.
   DECL_BOOLEAN_ACCESSORS(was_detached)
 
-  // [is_asmjs_memory]: true => this buffer was once used as asm.js memory.
-  DECL_BOOLEAN_ACCESSORS(is_asmjs_memory)
-
   // [is_shared]: true if this is a SharedArrayBuffer or a
   // GrowableSharedArrayBuffer.
   DECL_BOOLEAN_ACCESSORS(is_shared)
@@ -90,7 +87,7 @@ class JSArrayBuffer
   // An ArrayBuffer with a size greater than zero is never empty.
   DECL_GETTER(IsEmpty, bool)
 
-  DECL_ACCESSORS(detach_key, Object)
+  DECL_ACCESSORS(detach_key, Tagged<Object>)
 
   // Initializes the fields of the ArrayBuffer. The provided backing_store can
   // be nullptr. If it is not nullptr, then the function registers it with
@@ -168,14 +165,15 @@ class JSArrayBuffer
  private:
   void DetachInternal(bool force_for_wasm_memory, Isolate* isolate);
 
-  inline ArrayBufferExtension** extension_location() const;
-
 #if V8_COMPRESS_POINTERS
-  static const int kUninitializedTagMask = 1;
-
-  inline uint32_t* extension_lo() const;
-  inline uint32_t* extension_hi() const;
-#endif
+  // When pointer compression is enabled, the pointer to the extension is
+  // stored in the external pointer table and the object itself only contains a
+  // 32-bit external pointer handles. This simplifies alignment requirements
+  // and is also necessary for the sandbox.
+  inline ExternalPointerHandle* extension_handle_location() const;
+#else
+  inline ArrayBufferExtension** extension_location() const;
+#endif  // V8_COMPRESS_POINTERS
 
   TQ_OBJECT_CONSTRUCTORS(JSArrayBuffer)
 };
@@ -281,16 +279,14 @@ class JSArrayBufferView
 class JSTypedArray
     : public TorqueGeneratedJSTypedArray<JSTypedArray, JSArrayBufferView> {
  public:
-  // TODO(v8:4153): This should be equal to JSArrayBuffer::kMaxByteLength
-  // eventually.
-  static constexpr size_t kMaxLength = v8::TypedArray::kMaxLength;
-  static_assert(kMaxLength <= JSArrayBuffer::kMaxByteLength);
+  static constexpr size_t kMaxByteLength = JSArrayBuffer::kMaxByteLength;
+  static_assert(kMaxByteLength == v8::TypedArray::kMaxByteLength);
 
   // [length]: length of typed array in elements.
   DECL_PRIMITIVE_GETTER(length, size_t)
 
-  DECL_GETTER(base_pointer, Object)
-  DECL_ACQUIRE_GETTER(base_pointer, Object)
+  DECL_GETTER(base_pointer, Tagged<Object>)
+  DECL_ACQUIRE_GETTER(base_pointer, Tagged<Object>)
 
   // ES6 9.4.5.3
   V8_WARN_UNUSED_RESULT static Maybe<bool> DefineOwnProperty(
@@ -390,7 +386,6 @@ class JSTypedArray
   template <typename IsolateT>
   friend class Deserializer;
   friend class Factory;
-  friend class WebSnapshotDeserializer;
 
   DECL_PRIMITIVE_SETTER(length, size_t)
   // Reads the "length" field, doesn't assert the TypedArray is not RAB / GSAB
@@ -399,24 +394,21 @@ class JSTypedArray
 
   DECL_GETTER(external_pointer, Address)
 
-  DECL_SETTER(base_pointer, Object)
-  DECL_RELEASE_SETTER(base_pointer, Object)
+  DECL_SETTER(base_pointer, Tagged<Object>)
+  DECL_RELEASE_SETTER(base_pointer, Tagged<Object>)
 
   inline void set_external_pointer(Isolate* isolate, Address value);
 
   TQ_OBJECT_CONSTRUCTORS(JSTypedArray)
 };
 
-class JSDataView
-    : public TorqueGeneratedJSDataView<JSDataView, JSArrayBufferView> {
+class JSDataViewOrRabGsabDataView
+    : public TorqueGeneratedJSDataViewOrRabGsabDataView<
+          JSDataViewOrRabGsabDataView, JSArrayBufferView> {
  public:
   // [data_pointer]: pointer to the actual data.
   DECL_GETTER(data_pointer, void*)
   inline void set_data_pointer(Isolate* isolate, void* value);
-
-  // Dispatched behavior.
-  DECL_PRINTER(JSDataView)
-  DECL_VERIFIER(JSDataView)
 
   // TODO(v8:9287): Re-enable when GCMole stops mixing 32/64 bit configs.
   // static_assert(IsAligned(kDataPointerOffset, kTaggedSize));
@@ -427,7 +419,32 @@ class JSDataView
 
   class BodyDescriptor;
 
+  TQ_OBJECT_CONSTRUCTORS(JSDataViewOrRabGsabDataView)
+};
+
+class JSDataView
+    : public TorqueGeneratedJSDataView<JSDataView,
+                                       JSDataViewOrRabGsabDataView> {
+ public:
+  // Dispatched behavior.
+  DECL_PRINTER(JSDataView)
+  DECL_VERIFIER(JSDataView)
+
   TQ_OBJECT_CONSTRUCTORS(JSDataView)
+};
+
+class JSRabGsabDataView
+    : public TorqueGeneratedJSRabGsabDataView<JSRabGsabDataView,
+                                              JSDataViewOrRabGsabDataView> {
+ public:
+  // Dispatched behavior.
+  DECL_PRINTER(JSRabGsabDataView)
+  DECL_VERIFIER(JSRabGsabDataView)
+
+  inline size_t GetByteLength() const;
+  inline bool IsOutOfBounds() const;
+
+  TQ_OBJECT_CONSTRUCTORS(JSRabGsabDataView)
 };
 
 }  // namespace internal

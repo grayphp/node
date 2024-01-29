@@ -1565,7 +1565,7 @@ class PreParser : public ParserBase<PreParser> {
     return PreParserExpression::StringLiteral();
   }
 
-  PreParserExpression ExpressionFromPrivateName(
+  V8_INLINE PreParserExpression ExpressionFromPrivateName(
       PrivateNameScopeIterator* private_name_scope,
       const PreParserIdentifier& name, int start_position) {
     VariableProxy* proxy = factory()->ast_node_factory()->NewVariableProxy(
@@ -1651,6 +1651,11 @@ class PreParser : public ParserBase<PreParser> {
   }
 
   V8_INLINE bool ParsingDynamicFunctionDeclaration() const { return false; }
+
+  V8_INLINE FunctionLiteral::EagerCompileHint GetEmbedderCompileHint(
+      FunctionLiteral::EagerCompileHint current_compile_hint, int position) {
+    return current_compile_hint;
+  }
 
 // Generate empty functions here as the preparser does not collect source
 // ranges for block coverage.

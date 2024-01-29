@@ -66,6 +66,7 @@ Array [
       fund
       get
       help
+      help-search
       hook
       init
       install
@@ -92,6 +93,7 @@ Array [
       restart
       root
       run-script
+      sbom
       search
       set
       shrinkwrap

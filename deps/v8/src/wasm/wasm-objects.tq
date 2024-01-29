@@ -18,13 +18,16 @@ extern class WasmInstanceObject extends JSObject;
 // a sandboxed pointer, because that would require having access to the isolate
 // root in the first place.
 extern class WasmApiFunctionRef extends HeapObject {
-  isolate_root: RawPtr;
   native_context: NativeContext;
   callable: JSReceiver|Undefined;
   // Present when compiling JSFastApiCall wrappers, needed
   // to load memory start/size fields.
   instance: WasmInstanceObject|Undefined;
   suspend: Smi;  // Boolean.
+  wrapper_budget: Smi;
+  call_origin: Smi|WasmInternalFunction|Tuple2;
+  // The signature is needed for the generic wasm-to-js wrapper.
+  sig: PodArrayOfWasmValueType;
 }
 
 // This is the representation that is used internally by wasm to represent
@@ -40,8 +43,9 @@ extern class WasmInternalFunction extends HeapObject {
   // The external (JS) representation of this function reference.
   external: JSFunction|Undefined;
   // This field is used when the call target is null.
-  @if(V8_EXTERNAL_CODE_SPACE) code: CodeDataContainer;
-  @ifnot(V8_EXTERNAL_CODE_SPACE) code: Code;
+  code: Code;
+  // The function index if ref is a WasmInstanceObject, -1 otherwise.
+  function_index: Smi;
   // The call target. Tagged with the kWasmInternalFunctionCallTargetTag
   call_target: ExternalPointer;
 }
@@ -53,8 +57,7 @@ extern class WasmFunctionData extends HeapObject {
   // The wasm-internal representation of this function object.
   internal: WasmInternalFunction;
   // Used for calling this function from JavaScript.
-  @if(V8_EXTERNAL_CODE_SPACE) wrapper_code: CodeDataContainer;
-  @ifnot(V8_EXTERNAL_CODE_SPACE) wrapper_code: Code;
+  wrapper_code: Code;
   // Encode the {promising} and {suspending} flags in a single smi.
   js_promise_flags: Smi;
 }
@@ -68,22 +71,21 @@ extern class WasmExportedFunctionData extends WasmFunctionData {
   wrapper_budget: Smi;
   // The next two fields are for fast calling from C++. The contract is
   // that they are lazily populated, and either all will be present or none.
-  @if(V8_EXTERNAL_CODE_SPACE) c_wrapper_code: CodeDataContainer;
-  @ifnot(V8_EXTERNAL_CODE_SPACE) c_wrapper_code: Code;
+  c_wrapper_code: Code;
   packed_args_size: Smi;
+  canonical_type_index: Smi;
   sig: ExternalPointer;  // wasm::FunctionSig*
 }
 
+extern operator '.sig_ptr' macro LoadWasmExportedFunctionDataSigPtr(
+    WasmExportedFunctionData): RawPtr;
+
 extern class WasmJSFunctionData extends WasmFunctionData {
-  serialized_return_count: Smi;
-  serialized_parameter_count: Smi;
-  // TODO(7748): Maybe store the canonical type index of the signature instead.
   serialized_signature: PodArrayOfWasmValueType;
 }
 
 extern class WasmCapiFunctionData extends WasmFunctionData {
   embedder_data: Foreign;  // Managed<wasm::FuncData>
-  // TODO(7748): Maybe store the canonical type index of the signature instead.
   serialized_signature: PodArrayOfWasmValueType;
 }
 
@@ -93,13 +95,12 @@ extern class WasmResumeData extends HeapObject {
 }
 
 extern class WasmIndirectFunctionTable extends Struct {
+  sig_ids: ByteArray;
+  targets: ExternalPointerArray;
+  refs: FixedArray;
   size: uint32;
   @if(TAGGED_SIZE_8_BYTES) optional_padding: uint32;
   @ifnot(TAGGED_SIZE_8_BYTES) optional_padding: void;
-  sig_ids: RawPtr;
-  targets: RawPtr;
-  managed_native_allocations: Foreign|Undefined;
-  refs: FixedArray;
 }
 
 extern class WasmContinuationObject extends HeapObject {
@@ -111,9 +112,16 @@ extern class WasmContinuationObject extends HeapObject {
 extern class WasmSuspenderObject extends JSObject {
   continuation: WasmContinuationObject|Undefined;
   parent: WasmSuspenderObject|Undefined;
+  promise: JSPromise;
   resume: JSObject|Undefined;
   reject: JSObject|Undefined;
   state: Smi;  // 0: Inactive, 1: Active, 2: Suspended.
+  // Number of Wasm-to-JS frames in this suspender's stack.
+  // If the value is non-zero, this means that there are JS frames on the stack
+  // and trying to suspend should trap.
+  wasm_to_js_counter: uint32;
+  @if(TAGGED_SIZE_8_BYTES) optional_padding: uint32;
+  @ifnot(TAGGED_SIZE_8_BYTES) optional_padding: void;
 }
 
 extern class WasmExceptionTag extends Struct {
@@ -162,7 +170,7 @@ extern class WasmGlobalObject extends JSObject {
   tagged_buffer: FixedArray|Undefined;
   offset: Smi;
   raw_type: Smi;
-  // TODO(7748): If we encode mutability in raw_type, turn this into a boolean
+  // TODO(14034): If we encode mutability in raw_type, turn this into a boolean
   // accessor.
   is_mutable: Smi;
 }
@@ -170,6 +178,7 @@ extern class WasmGlobalObject extends JSObject {
 extern class WasmTagObject extends JSObject {
   serialized_signature: PodArrayOfWasmValueType;
   tag: HeapObject;
+  canonical_type_index: Smi;
 }
 
 type WasmExportedFunction extends JSFunction;
@@ -192,7 +201,8 @@ extern class WasmTypeInfo extends HeapObject {
   type_index: uint32;
   @if(TAGGED_SIZE_8_BYTES) optional_padding: uint32;
   @ifnot(TAGGED_SIZE_8_BYTES) optional_padding: void;
-  instance: WasmInstanceObject;
+  // Is undefined for WasmExternalFunctions referring to WasmJSFunctions.
+  instance: WasmInstanceObject|Undefined;
   const supertypes_length: Smi;
   supertypes[supertypes_length]: Object;
 }
@@ -202,12 +212,10 @@ extern operator '.native_type_ptr' macro LoadWasmTypeInfoNativeTypePtr(
 
 // WasmObject corresponds to data ref types which are WasmStruct and WasmArray.
 @abstract
-extern class WasmObject extends JSReceiver {
-}
+extern class WasmObject extends JSReceiver {}
 
 @highestInstanceTypeWithinParentClassRange
-extern class WasmStruct extends WasmObject {
-}
+extern class WasmStruct extends WasmObject {}
 
 @lowestInstanceTypeWithinParentClassRange
 extern class WasmArray extends WasmObject {
@@ -220,4 +228,12 @@ extern class WasmArray extends WasmObject {
 class WasmStringViewIter extends HeapObject {
   string: String;
   offset: uint32;  // Index into string.
+
+  @if(TAGGED_SIZE_8_BYTES) optional_padding: uint32;
+  @ifnot(TAGGED_SIZE_8_BYTES) optional_padding: void;
 }
+
+extern class WasmNull extends HeapObject {}
+
+extern macro WasmNullConstant(): WasmNull;
+const kWasmNull: WasmNull = WasmNullConstant();

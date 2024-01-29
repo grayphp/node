@@ -1,9 +1,18 @@
 const assert = require('assert')
-const { atob } = require('buffer')
-const { format } = require('url')
-const { isValidHTTPToken, isomorphicDecode } = require('./util')
+const { isomorphicDecode } = require('./util')
 
 const encoder = new TextEncoder()
+
+/**
+ * @see https://mimesniff.spec.whatwg.org/#http-token-code-point
+ */
+const HTTP_TOKEN_CODEPOINTS = /^[!#$%&'*+-.^_|~A-Za-z0-9]+$/
+const HTTP_WHITESPACE_REGEX = /[\u000A|\u000D|\u0009|\u0020]/ // eslint-disable-line
+const ASCII_WHITESPACE_REPLACE_REGEX = /[\u0009\u000A\u000C\u000D\u0020]/g // eslint-disable-line
+/**
+ * @see https://mimesniff.spec.whatwg.org/#http-quoted-string-token-code-point
+ */
+const HTTP_QUOTED_STRING_TOKENS = /[\u0009|\u0020-\u007E|\u0080-\u00FF]/ // eslint-disable-line
 
 // https://fetch.spec.whatwg.org/#data-url-processor
 /** @param {URL} dataURL */
@@ -25,22 +34,20 @@ function dataURLProcessor (dataURL) {
   // 5. Let mimeType be the result of collecting a
   // sequence of code points that are not equal
   // to U+002C (,), given position.
-  let mimeType = collectASequenceOfCodePoints(
-    (char) => char !== ',',
+  let mimeType = collectASequenceOfCodePointsFast(
+    ',',
     input,
     position
   )
 
   // 6. Strip leading and trailing ASCII whitespace
   // from mimeType.
-  // Note: This will only remove U+0020 SPACE code
-  // points, if any.
   // Undici implementation note: we need to store the
   // length because if the mimetype has spaces removed,
   // the wrong amount will be sliced from the input in
   // step #9
   const mimeTypeLength = mimeType.length
-  mimeType = mimeType.replace(/^(\u0020)+|(\u0020)+$/g, '')
+  mimeType = removeASCIIWhitespace(mimeType, true, true)
 
   // 7. If position is past the end of input, then
   // return failure
@@ -112,7 +119,20 @@ function dataURLProcessor (dataURL) {
  * @param {boolean} excludeFragment
  */
 function URLSerializer (url, excludeFragment = false) {
-  return format(url, { fragment: !excludeFragment })
+  if (!excludeFragment) {
+    return url.href
+  }
+
+  const href = url.href
+  const hashLength = url.hash.length
+
+  const serialized = hashLength === 0 ? href : href.substring(0, href.length - hashLength)
+
+  if (!hashLength && href.endsWith('#')) {
+    return serialized.slice(0, -1)
+  }
+
+  return serialized
 }
 
 // https://infra.spec.whatwg.org/#collect-a-sequence-of-code-points
@@ -139,6 +159,25 @@ function collectASequenceOfCodePoints (condition, input, position) {
   return result
 }
 
+/**
+ * A faster collectASequenceOfCodePoints that only works when comparing a single character.
+ * @param {string} char
+ * @param {string} input
+ * @param {{ position: number }} position
+ */
+function collectASequenceOfCodePointsFast (char, input, position) {
+  const idx = input.indexOf(char, position.position)
+  const start = position.position
+
+  if (idx === -1) {
+    position.position = input.length
+    return input.slice(start)
+  }
+
+  position.position = idx
+  return input.slice(start, position.position)
+}
+
 // https://url.spec.whatwg.org/#string-percent-decode
 /** @param {string} input */
 function stringPercentDecode (input) {
@@ -149,20 +188,43 @@ function stringPercentDecode (input) {
   return percentDecode(bytes)
 }
 
+/**
+ * @param {number} byte
+ */
+function isHexCharByte (byte) {
+  // 0-9 A-F a-f
+  return (byte >= 0x30 && byte <= 0x39) || (byte >= 0x41 && byte <= 0x46) || (byte >= 0x61 && byte <= 0x66)
+}
+
+/**
+ * @param {number} byte
+ */
+function hexByteToNumber (byte) {
+  return (
+    // 0-9
+    byte >= 0x30 && byte <= 0x39
+      ? (byte - 48)
+    // Convert to uppercase
+    // ((byte & 0xDF) - 65) + 10
+      : ((byte & 0xDF) - 55)
+  )
+}
+
 // https://url.spec.whatwg.org/#percent-decode
 /** @param {Uint8Array} input */
 function percentDecode (input) {
+  const length = input.length
   // 1. Let output be an empty byte sequence.
-  /** @type {number[]} */
-  const output = []
-
+  /** @type {Uint8Array} */
+  const output = new Uint8Array(length)
+  let j = 0
   // 2. For each byte byte in input:
-  for (let i = 0; i < input.length; i++) {
+  for (let i = 0; i < length; ++i) {
     const byte = input[i]
 
     // 1. If byte is not 0x25 (%), then append byte to output.
     if (byte !== 0x25) {
-      output.push(byte)
+      output[j++] = byte
 
     // 2. Otherwise, if byte is 0x25 (%) and the next two bytes
     // after byte in input are not in the ranges
@@ -171,19 +233,16 @@ function percentDecode (input) {
     // to output.
     } else if (
       byte === 0x25 &&
-      !/^[0-9A-Fa-f]{2}$/i.test(String.fromCharCode(input[i + 1], input[i + 2]))
+      !(isHexCharByte(input[i + 1]) && isHexCharByte(input[i + 2]))
     ) {
-      output.push(0x25)
+      output[j++] = 0x25
 
     // 3. Otherwise:
     } else {
       // 1. Let bytePoint be the two bytes after byte in input,
       // decoded, and then interpreted as hexadecimal number.
-      const nextTwoBytes = String.fromCharCode(input[i + 1], input[i + 2])
-      const bytePoint = Number.parseInt(nextTwoBytes, 16)
-
       // 2. Append a byte whose value is bytePoint to output.
-      output.push(bytePoint)
+      output[j++] = (hexByteToNumber(input[i + 1]) << 4) | hexByteToNumber(input[i + 2])
 
       // 3. Skip the next two bytes in input.
       i += 2
@@ -191,7 +250,7 @@ function percentDecode (input) {
   }
 
   // 3. Return output.
-  return Uint8Array.from(output)
+  return length === j ? output : output.subarray(0, j)
 }
 
 // https://mimesniff.spec.whatwg.org/#parse-a-mime-type
@@ -199,7 +258,7 @@ function percentDecode (input) {
 function parseMIMEType (input) {
   // 1. Remove any leading and trailing HTTP whitespace
   // from input.
-  input = input.trim()
+  input = removeHTTPWhitespace(input, true, true)
 
   // 2. Let position be a position variable for input,
   // initially pointing at the start of input.
@@ -208,8 +267,8 @@ function parseMIMEType (input) {
   // 3. Let type be the result of collecting a sequence
   // of code points that are not U+002F (/) from
   // input, given position.
-  const type = collectASequenceOfCodePoints(
-    (char) => char !== '/',
+  const type = collectASequenceOfCodePointsFast(
+    '/',
     input,
     position
   )
@@ -217,7 +276,7 @@ function parseMIMEType (input) {
   // 4. If type is the empty string or does not solely
   // contain HTTP token code points, then return failure.
   // https://mimesniff.spec.whatwg.org/#http-token-code-point
-  if (type.length === 0 || !/^[!#$%&'*+-.^_|~A-z0-9]+$/.test(type)) {
+  if (type.length === 0 || !HTTP_TOKEN_CODEPOINTS.test(type)) {
     return 'failure'
   }
 
@@ -233,34 +292,35 @@ function parseMIMEType (input) {
   // 7. Let subtype be the result of collecting a sequence of
   // code points that are not U+003B (;) from input, given
   // position.
-  let subtype = collectASequenceOfCodePoints(
-    (char) => char !== ';',
+  let subtype = collectASequenceOfCodePointsFast(
+    ';',
     input,
     position
   )
 
   // 8. Remove any trailing HTTP whitespace from subtype.
-  subtype = subtype.trimEnd()
+  subtype = removeHTTPWhitespace(subtype, false, true)
 
   // 9. If subtype is the empty string or does not solely
   // contain HTTP token code points, then return failure.
-  if (subtype.length === 0 || !/^[!#$%&'*+-.^_|~A-z0-9]+$/.test(subtype)) {
+  if (subtype.length === 0 || !HTTP_TOKEN_CODEPOINTS.test(subtype)) {
     return 'failure'
   }
+
+  const typeLowercase = type.toLowerCase()
+  const subtypeLowercase = subtype.toLowerCase()
 
   // 10. Let mimeType be a new MIME type record whose type
   // is type, in ASCII lowercase, and subtype is subtype,
   // in ASCII lowercase.
   // https://mimesniff.spec.whatwg.org/#mime-type
   const mimeType = {
-    type: type.toLowerCase(),
-    subtype: subtype.toLowerCase(),
+    type: typeLowercase,
+    subtype: subtypeLowercase,
     /** @type {Map<string, string>} */
     parameters: new Map(),
     // https://mimesniff.spec.whatwg.org/#mime-type-essence
-    get essence () {
-      return `${this.type}/${this.subtype}`
-    }
+    essence: `${typeLowercase}/${subtypeLowercase}`
   }
 
   // 11. While position is not past the end of input:
@@ -272,7 +332,7 @@ function parseMIMEType (input) {
     // whitespace from input given position.
     collectASequenceOfCodePoints(
       // https://fetch.spec.whatwg.org/#http-whitespace
-      (char) => /(\u000A|\u000D|\u0009|\u0020)/.test(char), // eslint-disable-line
+      char => HTTP_WHITESPACE_REGEX.test(char),
       input,
       position
     )
@@ -320,8 +380,8 @@ function parseMIMEType (input) {
 
       // 2. Collect a sequence of code points that are not
       // U+003B (;) from input, given position.
-      collectASequenceOfCodePoints(
-        (char) => char !== ';',
+      collectASequenceOfCodePointsFast(
+        ';',
         input,
         position
       )
@@ -331,15 +391,14 @@ function parseMIMEType (input) {
       // 1. Set parameterValue to the result of collecting
       // a sequence of code points that are not U+003B (;)
       // from input, given position.
-      parameterValue = collectASequenceOfCodePoints(
-        (char) => char !== ';',
+      parameterValue = collectASequenceOfCodePointsFast(
+        ';',
         input,
         position
       )
 
       // 2. Remove any trailing HTTP whitespace from parameterValue.
-      // Note: it says "trailing" whitespace; leading is fine.
-      parameterValue = parameterValue.trimEnd()
+      parameterValue = removeHTTPWhitespace(parameterValue, false, true)
 
       // 3. If parameterValue is the empty string, then continue.
       if (parameterValue.length === 0) {
@@ -355,9 +414,8 @@ function parseMIMEType (input) {
     // then set mimeType’s parameters[parameterName] to parameterValue.
     if (
       parameterName.length !== 0 &&
-      /^[!#$%&'*+-.^_|~A-z0-9]+$/.test(parameterName) &&
-      // https://mimesniff.spec.whatwg.org/#http-quoted-string-token-code-point
-      !/^(\u0009|\x{0020}-\x{007E}|\x{0080}-\x{00FF})+$/.test(parameterValue) &&  // eslint-disable-line
+      HTTP_TOKEN_CODEPOINTS.test(parameterName) &&
+      (parameterValue.length === 0 || HTTP_QUOTED_STRING_TOKENS.test(parameterValue)) &&
       !mimeType.parameters.has(parameterName)
     ) {
       mimeType.parameters.set(parameterName, parameterValue)
@@ -372,19 +430,25 @@ function parseMIMEType (input) {
 /** @param {string} data */
 function forgivingBase64 (data) {
   // 1. Remove all ASCII whitespace from data.
-  data = data.replace(/[\u0009\u000A\u000C\u000D\u0020]/g, '')  // eslint-disable-line
+  data = data.replace(ASCII_WHITESPACE_REPLACE_REGEX, '')  // eslint-disable-line
 
+  let dataLength = data.length
   // 2. If data’s code point length divides by 4 leaving
   // no remainder, then:
-  if (data.length % 4 === 0) {
+  if (dataLength % 4 === 0) {
     // 1. If data ends with one or two U+003D (=) code points,
     // then remove them from data.
-    data = data.replace(/=?=$/, '')
+    if (data.charCodeAt(dataLength - 1) === 0x003D) {
+      --dataLength
+      if (data.charCodeAt(dataLength - 1) === 0x003D) {
+        --dataLength
+      }
+    }
   }
 
   // 3. If data’s code point length divides by 4 leaving
   // a remainder of 1, then return failure.
-  if (data.length % 4 === 1) {
+  if (dataLength % 4 === 1) {
     return 'failure'
   }
 
@@ -393,18 +457,12 @@ function forgivingBase64 (data) {
   //  U+002F (/)
   //  ASCII alphanumeric
   // then return failure.
-  if (/[^+/0-9A-Za-z]/.test(data)) {
+  if (/[^+/0-9A-Za-z]/.test(data.length === dataLength ? data : data.substring(0, dataLength))) {
     return 'failure'
   }
 
-  const binary = atob(data)
-  const bytes = new Uint8Array(binary.length)
-
-  for (let byte = 0; byte < binary.length; byte++) {
-    bytes[byte] = binary.charCodeAt(byte)
-  }
-
-  return bytes
+  const buffer = Buffer.from(data, 'base64')
+  return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
 }
 
 // https://fetch.spec.whatwg.org/#collect-an-http-quoted-string
@@ -491,11 +549,11 @@ function collectAnHTTPQuotedString (input, position, extractValue) {
  */
 function serializeAMimeType (mimeType) {
   assert(mimeType !== 'failure')
-  const { type, subtype, parameters } = mimeType
+  const { parameters, essence } = mimeType
 
   // 1. Let serialization be the concatenation of mimeType’s
   //    type, U+002F (/), and mimeType’s subtype.
-  let serialization = `${type}/${subtype}`
+  let serialization = essence
 
   // 2. For each name → value of mimeType’s parameters:
   for (let [name, value] of parameters.entries()) {
@@ -510,8 +568,8 @@ function serializeAMimeType (mimeType) {
 
     // 4. If value does not solely contain HTTP token code
     //    points or value is the empty string, then:
-    if (!isValidHTTPToken(value)) {
-      // 1. Precede each occurence of U+0022 (") or
+    if (!HTTP_TOKEN_CODEPOINTS.test(value)) {
+      // 1. Precede each occurrence of U+0022 (") or
       //    U+005C (\) in value with U+005C (\).
       value = value.replace(/(\\|")/g, '\\$1')
 
@@ -530,10 +588,71 @@ function serializeAMimeType (mimeType) {
   return serialization
 }
 
+/**
+ * @see https://fetch.spec.whatwg.org/#http-whitespace
+ * @param {number} char
+ */
+function isHTTPWhiteSpace (char) {
+  // "\r\n\t "
+  return char === 0x00d || char === 0x00a || char === 0x009 || char === 0x020
+}
+
+/**
+ * @see https://fetch.spec.whatwg.org/#http-whitespace
+ * @param {string} str
+ * @param {boolean} [leading=true]
+ * @param {boolean} [trailing=true]
+ */
+function removeHTTPWhitespace (str, leading = true, trailing = true) {
+  let lead = 0
+  let trail = str.length - 1
+
+  if (leading) {
+    while (lead < str.length && isHTTPWhiteSpace(str.charCodeAt(lead))) lead++
+  }
+
+  if (trailing) {
+    while (trail > 0 && isHTTPWhiteSpace(str.charCodeAt(trail))) trail--
+  }
+
+  return lead === 0 && trail === str.length - 1 ? str : str.slice(lead, trail + 1)
+}
+
+/**
+ * @see https://infra.spec.whatwg.org/#ascii-whitespace
+ * @param {number} char
+ */
+function isASCIIWhitespace (char) {
+  // "\r\n\t\f "
+  return char === 0x00d || char === 0x00a || char === 0x009 || char === 0x00c || char === 0x020
+}
+
+/**
+ * @see https://infra.spec.whatwg.org/#strip-leading-and-trailing-ascii-whitespace
+ * @param {string} str
+ * @param {boolean} [leading=true]
+ * @param {boolean} [trailing=true]
+ */
+function removeASCIIWhitespace (str, leading = true, trailing = true) {
+  let lead = 0
+  let trail = str.length - 1
+
+  if (leading) {
+    while (lead < str.length && isASCIIWhitespace(str.charCodeAt(lead))) lead++
+  }
+
+  if (trailing) {
+    while (trail > 0 && isASCIIWhitespace(str.charCodeAt(trail))) trail--
+  }
+
+  return lead === 0 && trail === str.length - 1 ? str : str.slice(lead, trail + 1)
+}
+
 module.exports = {
   dataURLProcessor,
   URLSerializer,
   collectASequenceOfCodePoints,
+  collectASequenceOfCodePointsFast,
   stringPercentDecode,
   parseMIMEType,
   collectAnHTTPQuotedString,

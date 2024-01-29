@@ -13,6 +13,7 @@ namespace node {
 
 using v8::ArrayBuffer;
 using v8::BackingStore;
+using v8::Boolean;
 using v8::FunctionCallbackInfo;
 using v8::FunctionTemplate;
 using v8::HandleScope;
@@ -72,7 +73,7 @@ bool ApplyRSAOptions(const ManagedEVPPKey& pkey,
 }
 
 std::unique_ptr<BackingStore> Node_SignFinal(Environment* env,
-                                             EVPMDPointer&& mdctx,
+                                             EVPMDCtxPointer&& mdctx,
                                              const ManagedEVPPKey& pkey,
                                              int padding,
                                              Maybe<int> pss_salt_len) {
@@ -329,9 +330,7 @@ void Sign::Initialize(Environment* env, Local<Object> target) {
   Isolate* isolate = env->isolate();
   Local<FunctionTemplate> t = NewFunctionTemplate(isolate, New);
 
-  t->InstanceTemplate()->SetInternalFieldCount(
-      SignBase::kInternalFieldCount);
-  t->Inherit(BaseObject::GetConstructorTemplate(env));
+  t->InstanceTemplate()->SetInternalFieldCount(SignBase::kInternalFieldCount);
 
   SetProtoMethod(isolate, t, "init", SignInit);
   SetProtoMethod(isolate, t, "update", SignUpdate);
@@ -392,7 +391,7 @@ Sign::SignResult Sign::SignFinal(
   if (!mdctx_)
     return SignResult(kSignNotInitialised);
 
-  EVPMDPointer mdctx = std::move(mdctx_);
+  EVPMDCtxPointer mdctx = std::move(mdctx_);
 
   if (!ValidateDSAParameters(pkey.get()))
     return SignResult(kSignPrivateKey);
@@ -459,9 +458,7 @@ void Verify::Initialize(Environment* env, Local<Object> target) {
   Isolate* isolate = env->isolate();
   Local<FunctionTemplate> t = NewFunctionTemplate(isolate, New);
 
-  t->InstanceTemplate()->SetInternalFieldCount(
-      SignBase::kInternalFieldCount);
-  t->Inherit(BaseObject::GetConstructorTemplate(env));
+  t->InstanceTemplate()->SetInternalFieldCount(SignBase::kInternalFieldCount);
 
   SetProtoMethod(isolate, t, "init", VerifyInit);
   SetProtoMethod(isolate, t, "update", VerifyUpdate);
@@ -514,7 +511,7 @@ SignBase::Error Verify::VerifyFinal(const ManagedEVPPKey& pkey,
   unsigned char m[EVP_MAX_MD_SIZE];
   unsigned int m_len;
   *verify_result = false;
-  EVPMDPointer mdctx = std::move(mdctx_);
+  EVPMDCtxPointer mdctx = std::move(mdctx_);
 
   if (!EVP_DigestFinal_ex(mdctx.get(), m, &m_len))
     return kSignPublicKey;
@@ -699,7 +696,7 @@ bool SignTraits::DeriveBits(
     const SignConfiguration& params,
     ByteSource* out) {
   ClearErrorOnReturn clear_error_on_return;
-  EVPMDPointer context(EVP_MD_CTX_new());
+  EVPMDCtxPointer context(EVP_MD_CTX_new());
   EVP_PKEY_CTX* ctx = nullptr;
 
   switch (params.mode) {
@@ -820,8 +817,7 @@ Maybe<bool> SignTraits::EncodeOutput(
       *result = out->ToArrayBuffer(env);
       break;
     case SignConfiguration::kVerify:
-      *result = out->data<char>()[0] == 1 ? v8::True(env->isolate())
-                                          : v8::False(env->isolate());
+      *result = Boolean::New(env->isolate(), out->data<char>()[0] == 1);
       break;
     default:
       UNREACHABLE();

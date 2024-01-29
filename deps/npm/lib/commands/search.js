@@ -1,4 +1,4 @@
-const Minipass = require('minipass')
+const { Minipass } = require('minipass')
 const Pipeline = require('minipass-pipeline')
 const libSearch = require('libnpmsearch')
 const log = require('../utils/log-shim.js')
@@ -51,7 +51,6 @@ class Search extends BaseCommand {
   ]
 
   static usage = ['[search terms ...]']
-  static ignoreImplicitWorkspace = true
 
   async exec (args) {
     const opts = {
@@ -69,6 +68,10 @@ class Search extends BaseCommand {
     let anyOutput = false
 
     class FilterStream extends Minipass {
+      constructor () {
+        super({ objectMode: true })
+      }
+
       write (pkg) {
         if (filter(pkg, opts.include, opts.exclude)) {
           super.write(pkg)
@@ -78,12 +81,12 @@ class Search extends BaseCommand {
 
     const filterStream = new FilterStream()
 
-    // Grab a configured output stream that will spit out packages in the
-    // desired format.
-    const outputStream = formatSearchStream({
+    const { default: stripAnsi } = await import('strip-ansi')
+    // Grab a configured output stream that will spit out packages in the desired format.
+    const outputStream = await formatSearchStream({
       args, // --searchinclude options are not highlighted
       ...opts,
-    })
+    }, stripAnsi)
 
     log.silly('search', 'searching packages')
     const p = new Pipeline(

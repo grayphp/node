@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 // Flags: --experimental-wasm-gc --experimental-wasm-stringref
-// Flags: --no-wasm-gc-structref-as-dataref
 
 d8.file.execute('test/mjsunit/wasm/wasm-module-builder.js');
 
@@ -12,6 +11,7 @@ let tableTypes = {
   "eqref": kWasmEqRef,
   "structref": kWasmStructRef,
   "arrayref": kWasmArrayRef,
+  "i31ref": kWasmI31Ref,
 };
 
 // Test table consistency check.
@@ -29,7 +29,7 @@ for (let [typeName, type] of Object.entries(tableTypes)) {
       builder.instantiate({ imports: { table } });
     } else {
       let err = 'WebAssembly.Instance(): Import #0 module="imports" ' +
-                'function="table" error: imported table does not match the ' +
+                'function="table": imported table does not match the ' +
                 'expected type';
       assertThrows(() => builder.instantiate({ imports: { table } }),
                    WebAssembly.LinkError,
@@ -75,7 +75,6 @@ for (let [typeName, type] of Object.entries(tableTypes)) {
   builder.addFunction("tableGetStructVal", getValSig)
     .addBody([
       kExprLocalGet, 0, kExprTableGet, 0,
-      kGCPrefix, kExprRefAsStruct,
       kGCPrefix, kExprRefCast, struct,
       kGCPrefix, kExprStructGet, struct, 0,
     ])
@@ -83,7 +82,6 @@ for (let [typeName, type] of Object.entries(tableTypes)) {
   builder.addFunction("tableGetArrayVal", getValSig)
     .addBody([
       kExprLocalGet, 0, kExprTableGet, 0,
-      kGCPrefix, kExprRefAsArray,
       kGCPrefix, kExprRefCast, array,
       kExprI32Const, 0,
       kGCPrefix, kExprArrayGet, array,
@@ -113,13 +111,15 @@ for (let [typeName, type] of Object.entries(tableTypes)) {
   let i31Sig = typeName != "structref" && typeName != "arrayref"
                ? creatorSig : creatorAnySig;
   builder.addFunction("createI31", i31Sig)
-    .addBody([kExprI32Const, 12, kGCPrefix, kExprI31New])
+    .addBody([kExprI32Const, 12, kGCPrefix, kExprRefI31])
     .exportFunc();
-  let structSig = typeName != "arrayref" ? creatorSig : creatorAnySig;
+  let structSig = typeName != "arrayref" && typeName != "i31ref"
+                  ? creatorSig : creatorAnySig;
   builder.addFunction("createStruct", structSig)
     .addBody([kExprI32Const, 12, kGCPrefix, kExprStructNew, struct])
     .exportFunc();
-  let arraySig = typeName != "structref" ? creatorSig : creatorAnySig;
+  let arraySig = typeName != "structref" && typeName != "i31ref"
+                 ? creatorSig : creatorAnySig;
   builder.addFunction("createArray", arraySig)
     .addBody([
       kExprI32Const, 12,
@@ -158,7 +158,7 @@ for (let [typeName, type] of Object.entries(tableTypes)) {
     assertSame(table.get(2), table.get(3)); // The same smi.
   }
   // Set struct.
-  if (typeName != "arrayref") {
+  if (typeName != "arrayref" && typeName != "i31ref") {
     table.set(4, wasm.exported(wasm.createStruct));
     assertSame(table.get(4), wasm.tableGet(4));
     assertEquals(12, wasm.tableGetStructVal(4));
@@ -168,7 +168,7 @@ for (let [typeName, type] of Object.entries(tableTypes)) {
     assertNotSame(table.get(4), table.get(5));
   }
   // Set array.
-  if (typeName != "structref") {
+  if (typeName != "structref" && typeName != "i31ref") {
     table.set(6, wasm.exported(wasm.createArray));
     assertSame(table.get(6), wasm.tableGet(6));
     assertEquals(12, wasm.tableGetArrayVal(6));
@@ -190,7 +190,7 @@ for (let [typeName, type] of Object.entries(tableTypes)) {
     assertEquals(largeString, table.get(9));
   }
 
-  if (typeName != "arrayref") {
+  if (typeName != "arrayref" && typeName != "i31ref") {
     // Grow table with explicit value.
     table.grow(2, wasm.exported(wasm.createStruct));
     assertEquals(12, wasm.tableGetStructVal(size));
@@ -198,12 +198,33 @@ for (let [typeName, type] of Object.entries(tableTypes)) {
     assertTraps(kTrapTableOutOfBounds, () => wasm.tableGetStructVal(size + 2));
     // Grow by 1 without initial value.
     table.grow(1, null);
-    table.grow(1, undefined);
+    if (typeName == "anyref") {
+      // Undefined is fine for anyref.
+      table.grow(1, undefined);
+    } else {
+      // But not for any other wasm internal type.
+      assertThrows(() => table.grow(1, undefined), TypeError);
+      // No-argument will use the default value.
+      table.grow(1);
+    }
   }
   if (typeName == "anyref") {
     table.grow(1, "Grow using a string");
     assertEquals("Grow using a string", wasm.tableGet(14));
     assertEquals("Grow using a string", table.get(14));
+  }
+  if (typeName == "i31ref" || typeName == "anyref") {
+    table.set(0, 123);
+    assertEquals(123, table.get(0));
+    table.set(1, -123);
+    assertEquals(-123, table.get(1));
+    if (typeName == "i31ref") {
+      assertThrows(() => table.set(0, 1 << 31), TypeError);
+    } else {
+      // anyref can reference boxed numbers as well.
+      table.set(0, 1 << 31)
+      assertEquals(1 << 31, table.get(0));
+    }
   }
 
   // Set from JS with wrapped wasm value of incompatible type.
@@ -212,6 +233,7 @@ for (let [typeName, type] of Object.entries(tableTypes)) {
     "eqref": [],
     "structref": ["I31", "Array"],
     "arrayref": ["I31", "Struct"],
+    "i31ref": ["Struct", "Array"],
   };
   for (let invalidType of invalidValues[typeName]) {
     print(`Test invalid type ${invalidType} for ${typeName}`);

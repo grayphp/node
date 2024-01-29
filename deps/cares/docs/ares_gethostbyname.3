@@ -13,18 +13,22 @@
 .\" this software for any purpose.  It is provided "as is"
 .\" without express or implied warranty.
 .\"
+.\" SPDX-License-Identifier: MIT
+.\"
 .TH ARES_GETHOSTBYNAME 3 "25 July 1998"
 .SH NAME
 ares_gethostbyname \- Initiate a host query by name
 .SH SYNOPSIS
 .nf
-.B #include <ares.h>
-.PP
-.B typedef void (*ares_host_callback)(void *\fIarg\fP, int \fIstatus\fP,
-.B	int \fItimeouts\fP, struct hostent *\fIhostent\fP)
-.PP
-.B void ares_gethostbyname(ares_channel \fIchannel\fP, const char *\fIname\fP,
-.B 	int \fIfamily\fP, ares_host_callback \fIcallback\fP, void *\fIarg\fP)
+#include <ares.h>
+
+typedef void (*ares_host_callback)(void *\fIarg\fP, int \fIstatus\fP,
+                                   int \fItimeouts\fP,
+                                   struct hostent *\fIhostent\fP)
+
+void ares_gethostbyname(ares_channel_t *\fIchannel\fP, const char *\fIname\fP,
+                        int \fIfamily\fP, ares_host_callback \fIcallback\fP,
+                        void *\fIarg\fP)
 .fi
 .SH DESCRIPTION
 The
@@ -102,6 +106,12 @@ did not complete successfully,
 .I hostent
 will be
 .BR NULL .
+.PP
+If this is called from a thread other than which the main program event loop is
+running, care needs to be taken to ensure any file descriptor lists are updated
+immediately within the eventloop.  When the associated callback is called,
+it is called with a channel lock so care must be taken to ensure any processing
+is minimal to prevent DNS channel stalls.
 .SH SEE ALSO
 .BR ares_process (3),
 .BR ares_gethostbyaddr (3)

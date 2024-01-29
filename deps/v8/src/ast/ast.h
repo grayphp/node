@@ -13,6 +13,7 @@
 #include "src/base/pointer-with-payload.h"
 #include "src/base/threaded-list.h"
 #include "src/codegen/bailout-reason.h"
+#include "src/codegen/handler-table.h"
 #include "src/codegen/label.h"
 #include "src/common/globals.h"
 #include "src/heap/factory.h"
@@ -952,7 +953,7 @@ class Literal final : public Expression {
     return string_;
   }
 
-  Smi AsSmiLiteral() const {
+  Tagged<Smi> AsSmiLiteral() const {
     DCHECK_EQ(kSmi, type());
     return Smi::FromInt(smi_);
   }
@@ -1613,7 +1614,9 @@ enum AssignType {
   PRIVATE_METHOD,        // obj.#key: #key is a private method
   PRIVATE_GETTER_ONLY,   // obj.#key: #key only has a getter defined
   PRIVATE_SETTER_ONLY,   // obj.#key: #key only has a setter defined
-  PRIVATE_GETTER_AND_SETTER  // obj.#key: #key has both accessors defined
+  PRIVATE_GETTER_AND_SETTER,  // obj.#key: #key has both accessors defined
+  PRIVATE_DEBUG_DYNAMIC,      // obj.#key: #key is private that requries dynamic
+                              // lookup in debug-evaluate.
 };
 
 class Property final : public Expression {
@@ -1650,6 +1653,9 @@ class Property final : public Expression {
           return PRIVATE_SETTER_ONLY;
         case VariableMode::kPrivateGetterAndSetter:
           return PRIVATE_GETTER_AND_SETTER;
+        case VariableMode::kDynamic:
+          // From debug-evaluate.
+          return PRIVATE_DEBUG_DYNAMIC;
         default:
           UNREACHABLE();
       }
@@ -1859,7 +1865,7 @@ class BinaryOperation final : public Expression {
 
   // Returns true if one side is a Smi literal, returning the other side's
   // sub-expression in |subexpr| and the literal Smi in |literal|.
-  bool IsSmiLiteralOperation(Expression** subexpr, Smi* literal);
+  bool IsSmiLiteralOperation(Expression** subexpr, Tagged<Smi>* literal);
 
  private:
   friend class AstNodeFactory;
@@ -1973,6 +1979,7 @@ class CompareOperation final : public Expression {
   bool IsLiteralStrictCompareBoolean(Expression** expr, Literal** literal);
   bool IsLiteralCompareUndefined(Expression** expr);
   bool IsLiteralCompareNull(Expression** expr);
+  bool IsLiteralCompareEqualVariable(Expression** expr, Literal** literal);
 
  private:
   friend class AstNodeFactory;

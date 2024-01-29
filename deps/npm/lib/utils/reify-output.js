@@ -12,7 +12,7 @@
 const log = require('./log-shim.js')
 const { depth } = require('treeverse')
 const ms = require('ms')
-const auditReport = require('npm-audit-report')
+const npmAuditReport = require('npm-audit-report')
 const { readTree: getFundingInfo } = require('libnpmfund')
 const auditError = require('./audit-error.js')
 
@@ -76,7 +76,7 @@ const reifyOutput = (npm, arb) => {
       summary.audit = npm.command === 'audit' ? auditReport
         : auditReport.toJSON().metadata
     }
-    npm.output(JSON.stringify(summary, 0, 2))
+    npm.output(JSON.stringify(summary, null, 2))
   } else {
     packagesChangedMessage(npm, summary)
     packagesFundingMessage(npm, summary)
@@ -112,10 +112,11 @@ const getAuditReport = (npm, report) => {
   const defaultAuditLevel = npm.command !== 'audit' ? 'none' : 'low'
   const auditLevel = npm.flatOptions.auditLevel || defaultAuditLevel
 
-  const res = auditReport(report, {
+  const res = npmAuditReport(report, {
     reporter,
     ...npm.flatOptions,
     auditLevel,
+    chalk: npm.chalk,
   })
   if (npm.command === 'audit') {
     process.exitCode = process.exitCode || res.exitCode

@@ -144,6 +144,38 @@ v8::Local<v8::Value> FillGlobalStatsArray(BindingData* binding_data,
   }
 }
 
+template <typename NativeT, typename V8T>
+void FillStatFsArray(AliasedBufferBase<NativeT, V8T>* fields,
+                     const uv_statfs_t* s) {
+#define SET_FIELD(field, stat)                                                 \
+  fields->SetValue(static_cast<size_t>(FsStatFsOffset::field),                 \
+                   static_cast<NativeT>(stat))
+
+  SET_FIELD(kType, s->f_type);
+  SET_FIELD(kBSize, s->f_bsize);
+  SET_FIELD(kBlocks, s->f_blocks);
+  SET_FIELD(kBFree, s->f_bfree);
+  SET_FIELD(kBAvail, s->f_bavail);
+  SET_FIELD(kFiles, s->f_files);
+  SET_FIELD(kFFree, s->f_ffree);
+
+#undef SET_FIELD
+}
+
+v8::Local<v8::Value> FillGlobalStatFsArray(BindingData* binding_data,
+                                           const bool use_bigint,
+                                           const uv_statfs_t* s) {
+  if (use_bigint) {
+    auto* const arr = &binding_data->statfs_field_bigint_array;
+    FillStatFsArray(arr, s);
+    return arr->GetJSArray();
+  } else {
+    auto* const arr = &binding_data->statfs_field_array;
+    FillStatFsArray(arr, s);
+    return arr->GetJSArray();
+  }
+}
+
 template <typename AliasedBufferT>
 FSReqPromise<AliasedBufferT>*
 FSReqPromise<AliasedBufferT>::New(BindingData* binding_data,
@@ -172,17 +204,17 @@ FSReqPromise<AliasedBufferT>::~FSReqPromise() {
 }
 
 template <typename AliasedBufferT>
-FSReqPromise<AliasedBufferT>::FSReqPromise(
-    BindingData* binding_data,
-    v8::Local<v8::Object> obj,
-    bool use_bigint)
-  : FSReqBase(binding_data,
-              obj,
-              AsyncWrap::PROVIDER_FSREQPROMISE,
-              use_bigint),
-    stats_field_array_(
-        env()->isolate(),
-        static_cast<size_t>(FsStatsOffset::kFsStatsFieldsNumber)) {}
+FSReqPromise<AliasedBufferT>::FSReqPromise(BindingData* binding_data,
+                                           v8::Local<v8::Object> obj,
+                                           bool use_bigint)
+    : FSReqBase(
+          binding_data, obj, AsyncWrap::PROVIDER_FSREQPROMISE, use_bigint),
+      stats_field_array_(
+          env()->isolate(),
+          static_cast<size_t>(FsStatsOffset::kFsStatsFieldsNumber)),
+      statfs_field_array_(
+          env()->isolate(),
+          static_cast<size_t>(FsStatFsOffset::kFsStatFsFieldsNumber)) {}
 
 template <typename AliasedBufferT>
 void FSReqPromise<AliasedBufferT>::Reject(v8::Local<v8::Value> reject) {
@@ -215,6 +247,12 @@ void FSReqPromise<AliasedBufferT>::ResolveStat(const uv_stat_t* stat) {
 }
 
 template <typename AliasedBufferT>
+void FSReqPromise<AliasedBufferT>::ResolveStatFs(const uv_statfs_t* stat) {
+  FillStatFsArray(&statfs_field_array_, stat);
+  Resolve(statfs_field_array_.GetJSArray());
+}
+
+template <typename AliasedBufferT>
 void FSReqPromise<AliasedBufferT>::SetReturnValue(
     const v8::FunctionCallbackInfo<v8::Value>& args) {
   v8::Local<v8::Value> val =
@@ -228,6 +266,7 @@ template <typename AliasedBufferT>
 void FSReqPromise<AliasedBufferT>::MemoryInfo(MemoryTracker* tracker) const {
   FSReqBase::MemoryInfo(tracker);
   tracker->TrackField("stats_field_array", stats_field_array_);
+  tracker->TrackField("statfs_field_array", statfs_field_array_);
 }
 
 FSReqBase* GetReqWrap(const v8::FunctionCallbackInfo<v8::Value>& args,
@@ -238,9 +277,10 @@ FSReqBase* GetReqWrap(const v8::FunctionCallbackInfo<v8::Value>& args,
     return Unwrap<FSReqBase>(value.As<v8::Object>());
   }
 
-  BindingData* binding_data = Environment::GetBindingData<BindingData>(args);
-  Environment* env = binding_data->env();
-  if (value->StrictEquals(env->fs_use_promises_symbol())) {
+  Realm* realm = Realm::GetCurrent(args);
+  BindingData* binding_data = realm->GetBindingData<BindingData>();
+
+  if (value->StrictEquals(realm->isolate_data()->fs_use_promises_symbol())) {
     if (use_bigint) {
       return FSReqPromise<AliasedBigInt64Array>::New(binding_data, use_bigint);
     } else {
@@ -307,6 +347,38 @@ int SyncCall(Environment* env, v8::Local<v8::Value> ctx,
                  OneByteString(isolate, syscall)).Check();
   }
   return err;
+}
+
+// Similar to SyncCall but throws immediately if there is an error.
+template <typename Predicate, typename Func, typename... Args>
+int SyncCallAndThrowIf(Predicate should_throw,
+                       Environment* env,
+                       FSReqWrapSync* req_wrap,
+                       Func fn,
+                       Args... args) {
+  env->PrintSyncTrace();
+  int result = fn(nullptr, &(req_wrap->req), args..., nullptr);
+  if (should_throw(result)) {
+    env->ThrowUVException(result,
+                          req_wrap->syscall_p,
+                          nullptr,
+                          req_wrap->path_p,
+                          req_wrap->dest_p);
+  }
+  return result;
+}
+
+constexpr bool is_uv_error(int result) {
+  return result < 0;
+}
+
+// Similar to SyncCall but throws immediately if there is an error.
+template <typename Func, typename... Args>
+int SyncCallAndThrowOnError(Environment* env,
+                            FSReqWrapSync* req_wrap,
+                            Func fn,
+                            Args... args) {
+  return SyncCallAndThrowIf(is_uv_error, env, req_wrap, fn, args...);
 }
 
 }  // namespace fs

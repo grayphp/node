@@ -13,15 +13,17 @@
 .\" this software for any purpose.  It is provided "as is"
 .\" without express or implied warranty.
 .\"
+.\" SPDX-License-Identifier: MIT
+.\"
 .TH ARES_PARSE_SOA_REPLY 3 "29 May 2012"
 .SH NAME
 ares_parse_soa_reply \- Parse a reply to a DNS query of type SOA
 .SH SYNOPSIS
 .nf
-.B #include <ares.h>
-.PP
-.B int ares_parse_soa_reply(const unsigned char* \fIabuf\fP, int \fIalen\fP,
-.B				struct ares_soa_reply** \fIsoa_out\fP);
+#include <ares.h>
+
+int ares_parse_soa_reply(const unsigned char* \fIabuf\fP, int \fIalen\fP,
+                         struct ares_soa_reply** \fIsoa_out\fP);
 .fi
 .SH DESCRIPTION
 The
@@ -38,7 +40,7 @@ memory and a pointer to it stored into the variable pointed to by
 It is the caller's responsibility to free the resulting
 .IR soa_out
 structure when it is no longer needed using the function
-.B ares_free_data
+\fBares_free_data(3)\fP.
 .PP
 The structure 
 .I ares_soa_reply

@@ -285,6 +285,20 @@ inline bool IsFloatTypedArrayElementsKind(ElementsKind kind) {
          kind == RAB_GSAB_FLOAT32_ELEMENTS || kind == RAB_GSAB_FLOAT64_ELEMENTS;
 }
 
+inline bool IsSignedIntTypedArrayElementsKind(ElementsKind kind) {
+  return kind == INT8_ELEMENTS || kind == RAB_GSAB_INT8_ELEMENTS ||
+         kind == INT16_ELEMENTS || kind == RAB_GSAB_INT16_ELEMENTS ||
+         kind == INT32_ELEMENTS || kind == RAB_GSAB_INT32_ELEMENTS;
+}
+
+inline bool IsUnsignedIntTypedArrayElementsKind(ElementsKind kind) {
+  return kind == UINT8_CLAMPED_ELEMENTS ||
+         kind == RAB_GSAB_UINT8_CLAMPED_ELEMENTS || kind == UINT8_ELEMENTS ||
+         kind == RAB_GSAB_UINT8_ELEMENTS || kind == UINT16_ELEMENTS ||
+         kind == RAB_GSAB_UINT16_ELEMENTS || kind == UINT32_ELEMENTS ||
+         kind == RAB_GSAB_UINT32_ELEMENTS;
+}
+
 inline bool IsWasmArrayElementsKind(ElementsKind kind) {
   return kind == WASM_ARRAY_ELEMENTS;
 }
@@ -357,6 +371,15 @@ inline bool IsFrozenElementsKind(ElementsKind kind) {
       base::IsInRange(kind, PACKED_FROZEN_ELEMENTS, HOLEY_FROZEN_ELEMENTS),
       v8_flags.enable_sealed_frozen_elements_kind);
   return base::IsInRange(kind, PACKED_FROZEN_ELEMENTS, HOLEY_FROZEN_ELEMENTS);
+}
+
+inline bool IsFastOrNonextensibleOrSealedElementsKind(ElementsKind kind) {
+  const bool result = kind <= HOLEY_SEALED_ELEMENTS;
+  DCHECK_IMPLIES(result, IsFastElementsKind(kind) ||
+                             IsNonextensibleElementsKind(kind) ||
+                             IsSealedElementsKind(kind));
+  DCHECK_IMPLIES(result, !IsFrozenElementsKind(kind));
+  return result;
 }
 
 inline bool IsSmiOrObjectElementsKind(ElementsKind kind) {

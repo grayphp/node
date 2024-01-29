@@ -1,5 +1,6 @@
 const t = require('tap')
 const { load: loadMockNpm } = require('../../fixtures/mock-npm')
+const { cleanZlib } = require('../../fixtures/clean-snapshot')
 const MockRegistry = require('@npmcli/mock-registry')
 const pacote = require('pacote')
 const Arborist = require('@npmcli/arborist')
@@ -19,12 +20,7 @@ const pkgJson = {
   version: '1.0.0',
 }
 
-t.cleanSnapshot = data => {
-  return data.replace(/shasum:.*/g, 'shasum:{sha}')
-    .replace(/integrity:.*/g, 'integrity:{sha}')
-    .replace(/"shasum": ".*",/g, '"shasum": "{sha}",')
-    .replace(/"integrity": ".*",/g, '"integrity": "{sha}",')
-}
+t.cleanSnapshot = data => cleanZlib(data)
 
 t.test('respects publishConfig.registry, runs appropriate scripts', async t => {
   const { npm, joinedOutput, prefix } = await loadMockNpm(t, {
@@ -44,9 +40,6 @@ t.test('respects publishConfig.registry, runs appropriate scripts', async t => {
         publishConfig: { registry: alternateRegistry },
       }, null, 2),
     },
-    globals: ({ prefix }) => ({
-      'process.cwd': () => prefix,
-    }),
   })
   const registry = new MockRegistry({
     tap: t,
@@ -103,9 +96,6 @@ t.test('re-loads publishConfig.registry if added during script process', async t
         publishConfig: { registry: alternateRegistry },
       }),
     },
-    globals: ({ prefix }) => ({
-      'process.cwd': () => prefix,
-    }),
   })
   const registry = new MockRegistry({
     tap: t,
@@ -150,9 +140,6 @@ t.test('json', async t => {
     prefixDir: {
       'package.json': JSON.stringify(pkgJson, null, 2),
     },
-    globals: ({ prefix }) => ({
-      'process.cwd': () => prefix,
-    }),
   })
   const registry = new MockRegistry({
     tap: t,
@@ -174,9 +161,6 @@ t.test('dry-run', async t => {
     prefixDir: {
       'package.json': JSON.stringify(pkgJson, null, 2),
     },
-    globals: ({ prefix }) => ({
-      'process.cwd': () => prefix,
-    }),
   })
   await npm.exec('publish', [])
   t.equal(joinedOutput(), `+ ${pkg}@1.0.0`)
@@ -184,10 +168,7 @@ t.test('dry-run', async t => {
 })
 
 t.test('shows usage with wrong set of arguments', async t => {
-  t.plan(1)
-  const Publish = t.mock('../../../lib/commands/publish.js')
-  const publish = new Publish({ config: { validate: () => {} } })
-
+  const { publish } = await loadMockNpm(t, { command: 'publish' })
   await t.rejects(publish.exec(['a', 'b', 'c']), publish.usage)
 })
 
@@ -199,9 +180,6 @@ t.test('throws when invalid tag', async t => {
     prefixDir: {
       'package.json': JSON.stringify(pkgJson, null, 2),
     },
-    globals: ({ prefix }) => ({
-      'process.cwd': () => prefix,
-    }),
   })
   await t.rejects(
     npm.exec('publish', []),
@@ -247,9 +225,6 @@ t.test('no auth default registry', async t => {
     prefixDir: {
       'package.json': JSON.stringify(pkgJson, null, 2),
     },
-    globals: ({ prefix }) => ({
-      'process.cwd': () => prefix,
-    }),
   })
   await t.rejects(
     npm.exec('publish', []),
@@ -268,9 +243,6 @@ t.test('no auth dry-run', async t => {
     prefixDir: {
       'package.json': JSON.stringify(pkgJson, null, 2),
     },
-    globals: ({ prefix }) => ({
-      'process.cwd': () => prefix,
-    }),
   })
   await npm.exec('publish', [])
   t.matchSnapshot(joinedOutput())
@@ -286,9 +258,6 @@ t.test('no auth for configured registry', async t => {
     prefixDir: {
       'package.json': JSON.stringify(pkgJson, null, 2),
     },
-    globals: ({ prefix }) => ({
-      'process.cwd': () => prefix,
-    }),
   })
   await t.rejects(
     npm.exec('publish', []),
@@ -302,7 +271,8 @@ t.test('no auth for configured registry', async t => {
 t.test('no auth for scope configured registry', async t => {
   const { npm } = await loadMockNpm(t, {
     config: {
-      '@npm:registry': alternateRegistry,
+      scope: '@npm',
+      registry: alternateRegistry,
       ...auth,
     },
     prefixDir: {
@@ -311,9 +281,6 @@ t.test('no auth for scope configured registry', async t => {
         version: '1.0.0',
       }, null, 2),
     },
-    globals: ({ prefix }) => ({
-      'process.cwd': () => prefix,
-    }),
   })
   await t.rejects(
     npm.exec('publish', []),
@@ -328,7 +295,8 @@ t.test('has token auth for scope configured registry', async t => {
   const spec = npa('@npm/test-package')
   const { npm, joinedOutput } = await loadMockNpm(t, {
     config: {
-      '@npm:registry': alternateRegistry,
+      scope: '@npm',
+      registry: alternateRegistry,
       [`${alternateRegistry.slice(6)}/:_authToken`]: 'test-scope-token',
     },
     prefixDir: {
@@ -337,9 +305,6 @@ t.test('has token auth for scope configured registry', async t => {
         version: '1.0.0',
       }, null, 2),
     },
-    globals: ({ prefix }) => ({
-      'process.cwd': () => prefix,
-    }),
   })
   const registry = new MockRegistry({
     tap: t,
@@ -357,7 +322,8 @@ t.test('has mTLS auth for scope configured registry', async t => {
   const spec = npa('@npm/test-package')
   const { npm, joinedOutput } = await loadMockNpm(t, {
     config: {
-      '@npm:registry': alternateRegistry,
+      scope: '@npm',
+      registry: alternateRegistry,
       [`${alternateRegistry.slice(6)}/:certfile`]: '/some.cert',
       [`${alternateRegistry.slice(6)}/:keyfile`]: '/some.key',
     },
@@ -367,9 +333,6 @@ t.test('has mTLS auth for scope configured registry', async t => {
         version: '1.0.0',
       }, null, 2),
     },
-    globals: ({ prefix }) => ({
-      'process.cwd': () => prefix,
-    }),
   })
   const registry = new MockRegistry({
     tap: t,
@@ -425,9 +388,6 @@ t.test('workspaces', t => {
         ...auth,
         workspaces: true,
       },
-      globals: ({ prefix }) => ({
-        'process.cwd': () => prefix,
-      }),
       prefixDir: dir,
     })
     const registry = new MockRegistry({
@@ -457,9 +417,6 @@ t.test('workspaces', t => {
         color: 'always',
         workspaces: true,
       },
-      globals: ({ prefix }) => ({
-        'process.cwd': () => prefix,
-      }),
       prefixDir: dir,
     })
     const registry = new MockRegistry({
@@ -488,9 +445,6 @@ t.test('workspaces', t => {
         ...auth,
         workspace: ['workspace-a'],
       },
-      globals: ({ prefix }) => ({
-        'process.cwd': () => prefix,
-      }),
       prefixDir: dir,
     })
     const registry = new MockRegistry({
@@ -512,9 +466,6 @@ t.test('workspaces', t => {
         ...auth,
         workspace: ['workspace-a'],
       },
-      globals: ({ prefix }) => ({
-        'process.cwd': () => prefix,
-      }),
       prefixDir: dir,
     })
     const registry = new MockRegistry({
@@ -535,9 +486,6 @@ t.test('workspaces', t => {
         ...auth,
         workspace: ['workspace-x'],
       },
-      globals: ({ prefix }) => ({
-        'process.cwd': () => prefix,
-      }),
       prefixDir: dir,
     })
     await t.rejects(
@@ -553,9 +501,6 @@ t.test('workspaces', t => {
         workspaces: true,
         json: true,
       },
-      globals: ({ prefix }) => ({
-        'process.cwd': () => prefix,
-      }),
       prefixDir: dir,
     })
     const registry = new MockRegistry({
@@ -596,9 +541,6 @@ t.test('ignore-scripts', async t => {
         },
       }, null, 2),
     },
-    globals: ({ prefix }) => ({
-      'process.cwd': () => prefix,
-    }),
   })
   const registry = new MockRegistry({
     tap: t,
@@ -638,9 +580,6 @@ t.test('_auth config default registry', async t => {
     prefixDir: {
       'package.json': JSON.stringify(pkgJson),
     },
-    globals: ({ prefix }) => ({
-      'process.cwd': () => prefix,
-    }),
   })
   const registry = new MockRegistry({
     tap: t,
@@ -665,9 +604,6 @@ t.test('bare _auth and registry config', async t => {
         version: '1.0.0',
       }, null, 2),
     },
-    globals: ({ prefix }) => ({
-      'process.cwd': () => prefix,
-    }),
   })
   const registry = new MockRegistry({
     tap: t,
@@ -682,7 +618,8 @@ t.test('bare _auth and registry config', async t => {
 t.test('bare _auth config scoped registry', async t => {
   const { npm } = await loadMockNpm(t, {
     config: {
-      '@npm:registry': alternateRegistry,
+      scope: '@npm',
+      registry: alternateRegistry,
       _auth: basic,
     },
     prefixDir: {
@@ -691,9 +628,6 @@ t.test('bare _auth config scoped registry', async t => {
         version: '1.0.0',
       }, null, 2),
     },
-    globals: ({ prefix }) => ({
-      'process.cwd': () => prefix,
-    }),
   })
   await t.rejects(
     npm.exec('publish', []),
@@ -705,7 +639,8 @@ t.test('scoped _auth config scoped registry', async t => {
   const spec = npa('@npm/test-package')
   const { npm, joinedOutput } = await loadMockNpm(t, {
     config: {
-      '@npm:registry': alternateRegistry,
+      scope: '@npm',
+      registry: alternateRegistry,
       [`${alternateRegistry.slice(6)}/:_auth`]: basic,
     },
     prefixDir: {
@@ -714,9 +649,6 @@ t.test('scoped _auth config scoped registry', async t => {
         version: '1.0.0',
       }, null, 2),
     },
-    globals: ({ prefix }) => ({
-      'process.cwd': () => prefix,
-    }),
   })
   const registry = new MockRegistry({
     tap: t,
@@ -741,9 +673,6 @@ t.test('restricted access', async t => {
         version: '1.0.0',
       }, null, 2),
     },
-    globals: ({ prefix }) => ({
-      'process.cwd': () => prefix,
-    }),
   })
   const registry = new MockRegistry({
     tap: t,
@@ -772,9 +701,6 @@ t.test('public access', async t => {
         version: '1.0.0',
       }, null, 2),
     },
-    globals: ({ prefix }) => ({
-      'process.cwd': () => prefix,
-    }),
   })
   const registry = new MockRegistry({
     tap: t,
@@ -788,4 +714,55 @@ t.test('public access', async t => {
   await npm.exec('publish', [])
   t.matchSnapshot(joinedOutput(), 'new package version')
   t.matchSnapshot(logs.notice)
+})
+
+t.test('manifest', async t => {
+  // https://github.com/npm/cli/pull/6470#issuecomment-1571234863
+
+  // snapshot test that was generated against v9.6.7 originally to ensure our
+  // own manifest does not change unexpectedly when publishing. this test
+  // asserts a bunch of keys are there that will change often and then snapshots
+  // the rest of the manifest.
+
+  const root = path.resolve(__dirname, '../../..')
+  const npmPkg = require(path.join(root, 'package.json'))
+
+  t.cleanSnapshot = (s) => s.replace(new RegExp(npmPkg.version, 'g'), '{VERSION}')
+
+  let manifest = null
+  const { npm } = await loadMockNpm(t, {
+    config: {
+      ...auth,
+    },
+    chdir: () => root,
+    mocks: {
+      libnpmpublish: {
+        publish: (m) => manifest = m,
+      },
+    },
+  })
+  await npm.exec('publish', [])
+
+  const okKeys = [
+    'contributors',
+    'bundleDependencies',
+    'dependencies',
+    'devDependencies',
+    'templateOSS',
+    'scripts',
+    'tap',
+    'readme',
+    'engines',
+    'workspaces',
+  ]
+
+  for (const k of okKeys) {
+    t.ok(manifest[k], k)
+    delete manifest[k]
+  }
+  delete manifest.gitHead
+
+  manifest.man.sort()
+
+  t.matchSnapshot(manifest, 'manifest')
 })

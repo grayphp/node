@@ -59,6 +59,9 @@ namespace per_process {
 EnabledDebugList enabled_debug_list;
 }
 
+using v8::Local;
+using v8::StackTrace;
+
 void EnabledDebugList::Parse(std::shared_ptr<KVStore> env_vars,
                              v8::Isolate* isolate) {
   std::string cats;
@@ -303,7 +306,8 @@ std::string NativeSymbolDebuggingContext::SymbolInfo::Display() const {
   return oss.str();
 }
 
-void DumpBacktrace(FILE* fp) {
+void DumpNativeBacktrace(FILE* fp) {
+  fprintf(fp, "----- Native stack trace -----\n\n");
   auto sym_ctx = NativeSymbolDebuggingContext::New();
   void* frames[256];
   const int size = sym_ctx->GetStackTrace(frames, arraysize(frames));
@@ -314,6 +318,22 @@ void DumpBacktrace(FILE* fp) {
   }
 }
 
+void DumpJavaScriptBacktrace(FILE* fp) {
+  v8::Isolate* isolate = v8::Isolate::TryGetCurrent();
+  if (isolate == nullptr) {
+    return;
+  }
+
+  Local<StackTrace> stack;
+  if (!GetCurrentStackTrace(isolate).ToLocal(&stack)) {
+    return;
+  }
+
+  fprintf(fp, "\n----- JavaScript stack trace -----\n\n");
+  PrintStackTrace(isolate, stack, StackTracePrefix::kNumber);
+  fprintf(fp, "\n");
+}
+
 void CheckedUvLoopClose(uv_loop_t* loop) {
   if (uv_loop_close(loop) == 0) return;
 
@@ -321,7 +341,7 @@ void CheckedUvLoopClose(uv_loop_t* loop) {
 
   fflush(stderr);
   // Finally, abort.
-  CHECK(0 && "uv_loop_close() while having open handles");
+  UNREACHABLE("uv_loop_close() while having open handles");
 }
 
 void PrintLibuvHandleInformation(uv_loop_t* loop, FILE* stream) {
@@ -514,5 +534,6 @@ void FWrite(FILE* file, const std::string& str) {
 }  // namespace node
 
 extern "C" void __DumpBacktrace(FILE* fp) {
-  node::DumpBacktrace(fp);
+  node::DumpNativeBacktrace(fp);
+  node::DumpJavaScriptBacktrace(fp);
 }

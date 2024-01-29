@@ -30,10 +30,12 @@ exports[`test/lib/commands/config.js TAP config list --json > output matches sna
   "cafile": null,
   "call": "",
   "cert": null,
-  "ci-name": null,
   "cidr": null,
   "color": true,
   "commit-hooks": true,
+  "cpu": null,
+  "os": null,
+  "libc": null,
   "depth": null,
   "description": true,
   "dev": false,
@@ -81,13 +83,15 @@ exports[`test/lib/commands/config.js TAP config list --json > output matches sna
   "init.license": "ISC",
   "init.module": "{HOME}/.npm-init.js",
   "init.version": "1.0.0",
-  "install-links": true,
+  "install-links": false,
   "install-strategy": "hoisted",
   "key": null,
   "legacy-bundling": false,
   "legacy-peer-deps": false,
   "link": false,
   "local-address": null,
+  "sbom-format": null,
+  "sbom-type": "library",
   "location": "user",
   "lockfile-version": null,
   "loglevel": "notice",
@@ -111,11 +115,14 @@ exports[`test/lib/commands/config.js TAP config list --json > output matches sna
   "package-lock-only": false,
   "pack-destination": ".",
   "parseable": false,
+  "prefer-dedupe": false,
   "prefer-offline": false,
   "prefer-online": false,
   "preid": "",
   "production": null,
   "progress": true,
+  "provenance": false,
+  "provenance-file": null,
   "proxy": null,
   "read-only": false,
   "rebuild-bundle": true,
@@ -144,7 +151,6 @@ exports[`test/lib/commands/config.js TAP config list --json > output matches sna
   "tag": "latest",
   "tag-version-prefix": "v",
   "timing": false,
-  "tmp": "{TMP}",
   "umask": 0,
   "unicode": false,
   "update-notifier": true,
@@ -158,7 +164,7 @@ exports[`test/lib/commands/config.js TAP config list --json > output matches sna
   "workspaces": null,
   "workspaces-update": true,
   "yes": null,
-  "metrics-registry": "https://registry.npmjs.org/"
+  "npm-version": "{NPM-VERSION}"
 }
 `
 
@@ -183,10 +189,10 @@ cache-min = 0
 cafile = null
 call = ""
 cert = null
-ci-name = null
 cidr = null
 color = true
 commit-hooks = true
+cpu = null
 depth = null
 description = true
 dev = false
@@ -234,12 +240,13 @@ init.author.url = ""
 init.license = "ISC"
 init.module = "{HOME}/.npm-init.js"
 init.version = "1.0.0"
-install-links = true
+install-links = false
 install-strategy = "hoisted"
 json = false
 key = null
 legacy-bundling = false
 legacy-peer-deps = false
+libc = null
 link = false
 local-address = null
 location = "user"
@@ -250,26 +257,30 @@ logs-max = 10
 ; long = false ; overridden by cli
 maxsockets = 15
 message = "%s"
-metrics-registry = "https://registry.npmjs.org/"
 node-options = null
 noproxy = [""]
+npm-version = "{NPM-VERSION}"
 offline = false
 omit = []
 omit-lockfile-registry-resolved = false
 only = null
 optional = null
+os = null
 otp = null
 pack-destination = "."
 package = []
 package-lock = true
 package-lock-only = false
 parseable = false
+prefer-dedupe = false
 prefer-offline = false
 prefer-online = false
 ; prefix = "{REALGLOBALREFIX}" ; overridden by cli
 preid = ""
 production = null
 progress = true
+provenance = false
+provenance-file = null
 proxy = null
 read-only = false
 rebuild-bundle = true
@@ -283,6 +294,8 @@ save-optional = false
 save-peer = false
 save-prefix = "^"
 save-prod = false
+sbom-format = null
+sbom-type = "library"
 scope = ""
 script-shell = null
 searchexclude = ""
@@ -298,7 +311,6 @@ strict-ssl = true
 tag = "latest"
 tag-version-prefix = "v"
 timing = false
-tmp = "{TMP}"
 umask = 0
 unicode = false
 update-notifier = true
@@ -335,6 +347,18 @@ userconfig = "{HOME}/.npmrc"
 `
 
 exports[`test/lib/commands/config.js TAP config list > output matches snapshot 1`] = `
+; "global" config from {GLOBALPREFIX}/npmrc
+
+globalloaded = "yes"
+
+; "user" config from {HOME}/.npmrc
+
+userloaded = "yes"
+
+; "project" config from {LOCALPREFIX}/.npmrc
+
+projectloaded = "yes"
+
 ; "cli" config from command line options
 
 cache = "{NPMDIR}/test/lib/commands/tap-testdir-config-config-list-sandbox/cache"
@@ -354,7 +378,6 @@ exports[`test/lib/commands/config.js TAP config list with publishConfig > output
 ; "cli" config from command line options
 
 cache = "{NPMDIR}/test/lib/commands/tap-testdir-config-config-list-with-publishConfig-sandbox/cache"
-location = "project"
 prefix = "{LOCALPREFIX}"
 userconfig = "{HOME}/.npmrc"
 
@@ -378,6 +401,7 @@ global-prefix = "{LOCALPREFIX}"
 globalconfig = "{GLOBALPREFIX}/npmrc"
 init-module = "{HOME}/.npm-init.js"
 local-prefix = "{LOCALPREFIX}"
+npm-version = "{NPM-VERSION}"
 ; prefix = "{LOCALPREFIX}" ; overridden by cli
 user-agent = "npm/{NPM-VERSION} node/{NODE-VERSION} {PLATFORM} {ARCH} workspaces/false"
 ; userconfig = "{HOME}/.npmrc" ; overridden by cli

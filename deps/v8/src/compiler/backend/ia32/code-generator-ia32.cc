@@ -21,7 +21,6 @@
 #include "src/objects/smi.h"
 
 #if V8_ENABLE_WEBASSEMBLY
-#include "src/wasm/wasm-code-manager.h"
 #include "src/wasm/wasm-objects.h"
 #endif  // V8_ENABLE_WEBASSEMBLY
 
@@ -29,7 +28,7 @@ namespace v8 {
 namespace internal {
 namespace compiler {
 
-#define __ tasm()->
+#define __ masm()->
 
 #define kScratchDoubleReg xmm0
 
@@ -202,11 +201,11 @@ class IA32OperandConverter : public InstructionOperandConverter {
   void MoveInstructionOperandToRegister(Register destination,
                                         InstructionOperand* op) {
     if (op->IsImmediate() || op->IsConstant()) {
-      gen_->tasm()->mov(destination, ToImmediate(op));
+      gen_->masm()->mov(destination, ToImmediate(op));
     } else if (op->IsRegister()) {
-      gen_->tasm()->Move(destination, ToRegister(op));
+      gen_->masm()->Move(destination, ToRegister(op));
     } else {
-      gen_->tasm()->mov(destination, ToOperand(op));
+      gen_->masm()->mov(destination, ToOperand(op));
     }
   }
 };
@@ -272,10 +271,11 @@ class OutOfLineTruncateDoubleToI final : public OutOfLineCode {
     __ Movsd(MemOperand(esp, 0), input_);
 #if V8_ENABLE_WEBASSEMBLY
     if (stub_mode_ == StubCallMode::kCallWasmRuntimeStub) {
-      // A direct call to a wasm runtime stub defined in this module.
-      // Just encode the stub index. This will be patched when the code
-      // is added to the native module and copied into wasm code space.
-      __ wasm_call(wasm::WasmCode::kDoubleToI, RelocInfo::WASM_STUB_CALL);
+      // A direct call to a builtin. Just encode the builtin index. This will be
+      // patched when the code is added to the native module and copied into
+      // wasm code space.
+      __ wasm_call(static_cast<Address>(Builtin::kDoubleToI),
+                   RelocInfo::WASM_STUB_CALL);
 #else
     // For balance.
     if (false) {
@@ -318,10 +318,9 @@ class OutOfLineRecordWrite final : public OutOfLineCode {
   }
 
   void Generate() final {
-    __ CheckPageFlag(
-        value_, scratch0_,
-        MemoryChunk::kPointersToHereAreInterestingOrInSharedHeapMask, zero,
-        exit());
+    __ CheckPageFlag(value_, scratch0_,
+                     MemoryChunk::kPointersToHereAreInterestingMask, zero,
+                     exit());
     __ lea(scratch1_, operand_);
     SaveFPRegsMode const save_fp_mode = frame()->DidAllocateDoubleRegisters()
                                             ? SaveFPRegsMode::kSave
@@ -475,7 +474,7 @@ class OutOfLineRecordWrite final : public OutOfLineCode {
     XMMRegister src0 = i.InputSimd128Register(0);                    \
     Operand src1 = i.InputOperand(instr->InputCount() == 2 ? 1 : 0); \
     if (CpuFeatures::IsSupported(AVX)) {                             \
-      CpuFeatureScope avx_scope(tasm(), AVX);                        \
+      CpuFeatureScope avx_scope(masm(), AVX);                        \
       __ v##opcode(i.OutputSimd128Register(), src0, src1);           \
     } else {                                                         \
       DCHECK_EQ(i.OutputSimd128Register(), src0);                    \
@@ -485,11 +484,11 @@ class OutOfLineRecordWrite final : public OutOfLineCode {
 
 #define ASSEMBLE_SIMD_IMM_SHUFFLE(opcode, SSELevel, imm)               \
   if (CpuFeatures::IsSupported(AVX)) {                                 \
-    CpuFeatureScope avx_scope(tasm(), AVX);                            \
+    CpuFeatureScope avx_scope(masm(), AVX);                            \
     __ v##opcode(i.OutputSimd128Register(), i.InputSimd128Register(0), \
                  i.InputOperand(1), imm);                              \
   } else {                                                             \
-    CpuFeatureScope sse_scope(tasm(), SSELevel);                       \
+    CpuFeatureScope sse_scope(masm(), SSELevel);                       \
     DCHECK_EQ(i.OutputSimd128Register(), i.InputSimd128Register(0));   \
     __ opcode(i.OutputSimd128Register(), i.InputOperand(1), imm);      \
   }
@@ -508,21 +507,21 @@ class OutOfLineRecordWrite final : public OutOfLineCode {
     __ cmov(zero, dst, tmp);                         \
   } while (false)
 
-#define ASSEMBLE_SIMD_SHIFT(opcode, width)             \
-  do {                                                 \
-    XMMRegister dst = i.OutputSimd128Register();       \
-    DCHECK_EQ(dst, i.InputSimd128Register(0));         \
-    if (HasImmediateInput(instr, 1)) {                 \
-      __ opcode(dst, dst, byte{i.InputInt##width(1)}); \
-    } else {                                           \
-      XMMRegister tmp = i.TempSimd128Register(0);      \
-      Register tmp_shift = i.TempRegister(1);          \
-      constexpr int mask = (1 << width) - 1;           \
-      __ mov(tmp_shift, i.InputRegister(1));           \
-      __ and_(tmp_shift, Immediate(mask));             \
-      __ Movd(tmp, tmp_shift);                         \
-      __ opcode(dst, dst, tmp);                        \
-    }                                                  \
+#define ASSEMBLE_SIMD_SHIFT(opcode, width)                \
+  do {                                                    \
+    XMMRegister dst = i.OutputSimd128Register();          \
+    DCHECK_EQ(dst, i.InputSimd128Register(0));            \
+    if (HasImmediateInput(instr, 1)) {                    \
+      __ opcode(dst, dst, uint8_t{i.InputInt##width(1)}); \
+    } else {                                              \
+      XMMRegister tmp = i.TempSimd128Register(0);         \
+      Register tmp_shift = i.TempRegister(1);             \
+      constexpr int mask = (1 << width) - 1;              \
+      __ mov(tmp_shift, i.InputRegister(1));              \
+      __ and_(tmp_shift, Immediate(mask));                \
+      __ Movd(tmp, tmp_shift);                            \
+      __ opcode(dst, dst, tmp);                           \
+    }                                                     \
   } while (false)
 
 #define ASSEMBLE_SIMD_PINSR(OPCODE, CPU_FEATURE)             \
@@ -532,25 +531,24 @@ class OutOfLineRecordWrite final : public OutOfLineCode {
     int8_t laneidx = i.InputInt8(1);                         \
     if (HasAddressingMode(instr)) {                          \
       if (CpuFeatures::IsSupported(AVX)) {                   \
-        CpuFeatureScope avx_scope(tasm(), AVX);              \
+        CpuFeatureScope avx_scope(masm(), AVX);              \
         __ v##OPCODE(dst, src, i.MemoryOperand(2), laneidx); \
       } else {                                               \
         DCHECK_EQ(dst, src);                                 \
-        CpuFeatureScope sse_scope(tasm(), CPU_FEATURE);      \
+        CpuFeatureScope sse_scope(masm(), CPU_FEATURE);      \
         __ OPCODE(dst, i.MemoryOperand(2), laneidx);         \
       }                                                      \
     } else {                                                 \
       if (CpuFeatures::IsSupported(AVX)) {                   \
-        CpuFeatureScope avx_scope(tasm(), AVX);              \
+        CpuFeatureScope avx_scope(masm(), AVX);              \
         __ v##OPCODE(dst, src, i.InputOperand(2), laneidx);  \
       } else {                                               \
         DCHECK_EQ(dst, src);                                 \
-        CpuFeatureScope sse_scope(tasm(), CPU_FEATURE);      \
+        CpuFeatureScope sse_scope(masm(), CPU_FEATURE);      \
         __ OPCODE(dst, i.InputOperand(2), laneidx);          \
       }                                                      \
     }                                                        \
   } while (false)
-
 
 void CodeGenerator::AssembleDeconstructFrame() {
   __ mov(esp, ebp);
@@ -566,7 +564,7 @@ void CodeGenerator::AssemblePrepareTailCall() {
 
 namespace {
 
-void AdjustStackPointerForTailCall(TurboAssembler* tasm,
+void AdjustStackPointerForTailCall(MacroAssembler* masm,
                                    FrameAccessState* state,
                                    int new_slot_above_sp,
                                    bool allow_shrinkage = true) {
@@ -574,10 +572,10 @@ void AdjustStackPointerForTailCall(TurboAssembler* tasm,
                           StandardFrameConstants::kFixedSlotCountAboveFp;
   int stack_slot_delta = new_slot_above_sp - current_sp_offset;
   if (stack_slot_delta > 0) {
-    tasm->AllocateStackSpace(stack_slot_delta * kSystemPointerSize);
+    masm->AllocateStackSpace(stack_slot_delta * kSystemPointerSize);
     state->IncreaseSPDelta(stack_slot_delta);
   } else if (allow_shrinkage && stack_slot_delta < 0) {
-    tasm->add(esp, Immediate(-stack_slot_delta * kSystemPointerSize));
+    masm->add(esp, Immediate(-stack_slot_delta * kSystemPointerSize));
     state->IncreaseSPDelta(stack_slot_delta);
   }
 }
@@ -617,7 +615,7 @@ void CodeGenerator::AssembleTailCallBeforeGap(Instruction* instr,
       LocationOperand destination_location(
           LocationOperand::cast(move->destination()));
       InstructionOperand source(move->source());
-      AdjustStackPointerForTailCall(tasm(), frame_access_state(),
+      AdjustStackPointerForTailCall(masm(), frame_access_state(),
                                     destination_location.index());
       if (source.IsStackSlot()) {
         LocationOperand source_location(LocationOperand::cast(source));
@@ -635,13 +633,13 @@ void CodeGenerator::AssembleTailCallBeforeGap(Instruction* instr,
       move->Eliminate();
     }
   }
-  AdjustStackPointerForTailCall(tasm(), frame_access_state(),
+  AdjustStackPointerForTailCall(masm(), frame_access_state(),
                                 first_unused_slot_offset, false);
 }
 
 void CodeGenerator::AssembleTailCallAfterGap(Instruction* instr,
                                              int first_unused_slot_offset) {
-  AdjustStackPointerForTailCall(tasm(), frame_access_state(),
+  AdjustStackPointerForTailCall(masm(), frame_access_state(),
                                 first_unused_slot_offset);
 }
 
@@ -658,14 +656,14 @@ void CodeGenerator::AssembleCodeStartRegisterCheck() {
 // jumps to the CompileLazyDeoptimizedCode builtin. In order to do this we need
 // to:
 //    1. read from memory the word that contains that bit, which can be found in
-//       the flags in the referenced {CodeDataContainer} object;
+//       the flags in the referenced {Code} object;
 //    2. test kMarkedForDeoptimizationBit in those flags; and
 //    3. if it is not zero then it jumps to the builtin.
 void CodeGenerator::BailoutIfDeoptimized() {
-  int offset = Code::kCodeDataContainerOffset - Code::kHeaderSize;
+  int offset = InstructionStream::kCodeOffset - InstructionStream::kHeaderSize;
   __ push(eax);  // Push eax so we can use it as a scratch register.
   __ mov(eax, Operand(kJavaScriptCallCodeStartRegister, offset));
-  __ test(FieldOperand(eax, CodeDataContainer::kKindSpecificFlagsOffset),
+  __ test(FieldOperand(eax, Code::kFlagsOffset),
           Immediate(1 << Code::kMarkedForDeoptimizationBit));
   __ pop(eax);  // Restore eax.
 
@@ -693,8 +691,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
         DCHECK_IMPLIES(
             instr->HasCallDescriptorFlag(CallDescriptor::kFixedTargetRegister),
             reg == kJavaScriptCallCodeStartRegister);
-        __ LoadCodeObjectEntry(reg, reg);
-        __ call(reg);
+        __ CallCodeObject(reg);
       }
       RecordCallPosition(instr);
       frame_access_state()->ClearSPDelta();
@@ -703,7 +700,11 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     case kArchCallBuiltinPointer: {
       DCHECK(!HasImmediateInput(instr, 0));
       Register builtin_index = i.InputRegister(0);
-      __ CallBuiltinByIndex(builtin_index);
+      Register target =
+          instr->HasCallDescriptorFlag(CallDescriptor::kFixedTargetRegister)
+              ? kJavaScriptCallCodeStartRegister
+              : builtin_index;
+      __ CallBuiltinByIndex(builtin_index, target);
       RecordCallPosition(instr);
       frame_access_state()->ClearSPDelta();
       break;
@@ -747,8 +748,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
         DCHECK_IMPLIES(
             instr->HasCallDescriptorFlag(CallDescriptor::kFixedTargetRegister),
             reg == kJavaScriptCallCodeStartRegister);
-        __ LoadCodeObjectEntry(reg, reg);
-        __ jmp(reg);
+        __ JumpCodeObject(reg);
       }
       frame_access_state()->ClearSPDelta();
       frame_access_state()->SetFrameAccessToDefault();
@@ -772,9 +772,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
         __ cmp(esi, FieldOperand(func, JSFunction::kContextOffset));
         __ Assert(equal, AbortReason::kWrongFunctionContext);
       }
-      static_assert(kJavaScriptCallCodeStartRegister == ecx, "ABI mismatch");
-      __ mov(ecx, FieldOperand(func, JSFunction::kCodeOffset));
-      __ CallCodeObject(ecx);
+      __ CallJSFunction(func);
       RecordCallPosition(instr);
       frame_access_state()->ClearSPDelta();
       break;
@@ -826,11 +824,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
         // Put the return address in a stack slot.
         Register scratch = eax;
         __ push(scratch);
-        __ PushPC();
-        int pc = __ pc_offset();
-        __ pop(scratch);
-        __ sub(scratch, Immediate(pc + Code::kHeaderSize - kHeapObjectTag));
-        __ add(scratch, Immediate::CodeRelativeOffset(&return_location));
+        __ LoadLabelAddress(scratch, &return_location);
         __ mov(MemOperand(ebp, WasmExitFrameConstants::kCallingPCOffset),
                scratch);
         __ pop(scratch);
@@ -885,7 +879,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       {
         // We don't actually want to generate a pile of code for this, so just
         // claim there is a stack frame, without generating one.
-        FrameScope scope(tasm(), StackFrame::NO_FRAME_TYPE);
+        FrameScope scope(masm(), StackFrame::NO_FRAME_TYPE);
         __ Call(isolate()->builtins()->code_handle(Builtin::kAbortCSADcheck),
                 RelocInfo::CODE_TARGET);
       }
@@ -917,6 +911,9 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
         __ mov(i.OutputRegister(), ebp);
       }
       break;
+    case kArchStackPointer:
+    case kArchSetStackPointer:
+      UNREACHABLE();
     case kArchStackPointerGreaterThan: {
       // Potentially apply an offset to the current stack pointer before the
       // comparison to consider the size difference of an optimized frame versus
@@ -953,8 +950,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     }
     case kArchStoreWithWriteBarrier:  // Fall thrugh.
     case kArchAtomicStoreWithWriteBarrier: {
-      RecordWriteMode mode =
-          static_cast<RecordWriteMode>(MiscField::decode(instr->opcode()));
+      RecordWriteMode mode = RecordWriteModeField::decode(instr->opcode());
       Register object = i.InputRegister(0);
       size_t index = 0;
       Operand operand = i.MemoryOperand(&index);
@@ -987,6 +983,8 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       __ bind(ool->exit());
       break;
     }
+    case kArchStoreIndirectWithWriteBarrier:
+      UNREACHABLE();
     case kArchStackSlot: {
       FrameOffset offset =
           frame_access_state()->GetFrameOffset(i.InputInt32(0));
@@ -1263,7 +1261,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       __ Sqrtss(i.OutputDoubleRegister(), i.InputOperand(0));
       break;
     case kIA32Float32Round: {
-      CpuFeatureScope sse_scope(tasm(), SSE4_1);
+      CpuFeatureScope sse_scope(masm(), SSE4_1);
       RoundingMode const mode =
           static_cast<RoundingMode>(MiscField::decode(instr->opcode()));
       __ Roundss(i.OutputDoubleRegister(), i.InputDoubleRegister(0), mode);
@@ -1679,15 +1677,15 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       int slots = stack_decrement / kSystemPointerSize;
       // Whenever codegen uses push, we need to check if stack_decrement
       // contains any extra padding and adjust the stack before the push.
-      if (HasImmediateInput(instr, 1)) {
-        __ AllocateStackSpace(stack_decrement - kSystemPointerSize);
-        __ push(i.InputImmediate(1));
-      } else if (HasAddressingMode(instr)) {
+      if (HasAddressingMode(instr)) {
         // Only single slot pushes from memory are supported.
         __ AllocateStackSpace(stack_decrement - kSystemPointerSize);
         size_t index = 1;
         Operand operand = i.MemoryOperand(&index);
         __ push(operand);
+      } else if (HasImmediateInput(instr, 1)) {
+        __ AllocateStackSpace(stack_decrement - kSystemPointerSize);
+        __ push(i.InputImmediate(1));
       } else {
         InstructionOperand* input = instr->InputAt(1);
         if (input->IsRegister()) {
@@ -2095,6 +2093,13 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
                              i.InputSimd128Register(1));
       break;
     }
+    case kIA32I32x4DotI8x16I7x16AddS: {
+      __ I32x4DotI8x16I7x16AddS(
+          i.OutputSimd128Register(), i.InputSimd128Register(0),
+          i.InputSimd128Register(1), i.InputSimd128Register(2),
+          kScratchDoubleReg, i.TempSimd128Register(0));
+      break;
+    }
     case kIA32F32x4Splat: {
       __ F32x4Splat(i.OutputSimd128Register(), i.InputDoubleRegister(0));
       break;
@@ -2106,12 +2111,12 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     }
     case kIA32Insertps: {
       if (CpuFeatures::IsSupported(AVX)) {
-        CpuFeatureScope avx_scope(tasm(), AVX);
+        CpuFeatureScope avx_scope(masm(), AVX);
         __ vinsertps(i.OutputSimd128Register(), i.InputSimd128Register(0),
                      i.InputOperand(2), i.InputInt8(1) << 4);
       } else {
         DCHECK_EQ(i.OutputSimd128Register(), i.InputSimd128Register(0));
-        CpuFeatureScope sse_scope(tasm(), SSE4_1);
+        CpuFeatureScope sse_scope(masm(), SSE4_1);
         __ insertps(i.OutputSimd128Register(), i.InputOperand(2),
                     i.InputInt8(1) << 4);
       }
@@ -2128,7 +2133,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       __ Pblendw(kScratchDoubleReg, src, uint8_t{0x55});  // get lo 16 bits
       __ Psubd(dst, src, kScratchDoubleReg);              // get hi 16 bits
       __ Cvtdq2ps(kScratchDoubleReg, kScratchDoubleReg);  // convert lo exactly
-      __ Psrld(dst, dst, byte{1});  // divide by 2 to get in unsigned range
+      __ Psrld(dst, dst, uint8_t{1});  // divide by 2 to get in unsigned range
       __ Cvtdq2ps(dst, dst);    // convert hi exactly
       __ Addps(dst, dst, dst);  // double hi, exactly
       __ Addps(dst, dst, kScratchDoubleReg);  // add hi and lo, may round.
@@ -2309,12 +2314,12 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       XMMRegister src1 = i.InputSimd128Register(0);
       XMMRegister src2 = i.InputSimd128Register(1);
       if (CpuFeatures::IsSupported(AVX)) {
-        CpuFeatureScope avx_scope(tasm(), AVX);
+        CpuFeatureScope avx_scope(masm(), AVX);
         __ vpminsd(kScratchDoubleReg, src1, src2);
         __ vpcmpeqd(dst, kScratchDoubleReg, src2);
       } else {
         DCHECK_EQ(dst, src1);
-        CpuFeatureScope sse_scope(tasm(), SSE4_1);
+        CpuFeatureScope sse_scope(masm(), SSE4_1);
         __ pminsd(dst, src2);
         __ pcmpeqd(dst, src2);
       }
@@ -2322,7 +2327,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     }
     case kSSEI32x4UConvertF32x4: {
       DCHECK_EQ(i.OutputSimd128Register(), i.InputSimd128Register(0));
-      CpuFeatureScope sse_scope(tasm(), SSE4_1);
+      CpuFeatureScope sse_scope(masm(), SSE4_1);
       XMMRegister dst = i.OutputSimd128Register();
       XMMRegister tmp = i.TempSimd128Register(0);
       // NAN->0, negative->0
@@ -2350,7 +2355,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     }
     case kAVXI32x4UConvertF32x4: {
       DCHECK_EQ(i.OutputSimd128Register(), i.InputSimd128Register(0));
-      CpuFeatureScope avx_scope(tasm(), AVX);
+      CpuFeatureScope avx_scope(masm(), AVX);
       XMMRegister dst = i.OutputSimd128Register();
       XMMRegister tmp = i.TempSimd128Register(0);
       // NAN->0, negative->0
@@ -2400,7 +2405,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     }
     case kSSEI32x4GtU: {
       DCHECK_EQ(i.OutputSimd128Register(), i.InputSimd128Register(0));
-      CpuFeatureScope sse_scope(tasm(), SSE4_1);
+      CpuFeatureScope sse_scope(masm(), SSE4_1);
       XMMRegister dst = i.OutputSimd128Register();
       Operand src = i.InputOperand(1);
       __ pmaxud(dst, src);
@@ -2410,7 +2415,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
     case kAVXI32x4GtU: {
-      CpuFeatureScope avx_scope(tasm(), AVX);
+      CpuFeatureScope avx_scope(masm(), AVX);
       XMMRegister dst = i.OutputSimd128Register();
       XMMRegister src1 = i.InputSimd128Register(0);
       Operand src2 = i.InputOperand(1);
@@ -2422,7 +2427,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     }
     case kSSEI32x4GeU: {
       DCHECK_EQ(i.OutputSimd128Register(), i.InputSimd128Register(0));
-      CpuFeatureScope sse_scope(tasm(), SSE4_1);
+      CpuFeatureScope sse_scope(masm(), SSE4_1);
       XMMRegister dst = i.OutputSimd128Register();
       Operand src = i.InputOperand(1);
       __ pminud(dst, src);
@@ -2430,7 +2435,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
     case kAVXI32x4GeU: {
-      CpuFeatureScope avx_scope(tasm(), AVX);
+      CpuFeatureScope avx_scope(masm(), AVX);
       XMMRegister src1 = i.InputSimd128Register(0);
       Operand src2 = i.InputOperand(1);
       __ vpminud(kScratchDoubleReg, src1, src2);
@@ -2546,7 +2551,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
     case kAVXI16x8Ne: {
-      CpuFeatureScope avx_scope(tasm(), AVX);
+      CpuFeatureScope avx_scope(masm(), AVX);
       __ vpcmpeqw(i.OutputSimd128Register(), i.InputSimd128Register(0),
                   i.InputOperand(1));
       __ vpcmpeqw(kScratchDoubleReg, kScratchDoubleReg, kScratchDoubleReg);
@@ -2568,7 +2573,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
     case kAVXI16x8GeS: {
-      CpuFeatureScope avx_scope(tasm(), AVX);
+      CpuFeatureScope avx_scope(masm(), AVX);
       XMMRegister src1 = i.InputSimd128Register(0);
       Operand src2 = i.InputOperand(1);
       __ vpminsw(kScratchDoubleReg, src1, src2);
@@ -2615,7 +2620,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     }
     case kSSEI16x8GtU: {
       DCHECK_EQ(i.OutputSimd128Register(), i.InputSimd128Register(0));
-      CpuFeatureScope sse_scope(tasm(), SSE4_1);
+      CpuFeatureScope sse_scope(masm(), SSE4_1);
       XMMRegister dst = i.OutputSimd128Register();
       Operand src = i.InputOperand(1);
       __ pmaxuw(dst, src);
@@ -2625,7 +2630,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
     case kAVXI16x8GtU: {
-      CpuFeatureScope avx_scope(tasm(), AVX);
+      CpuFeatureScope avx_scope(masm(), AVX);
       XMMRegister dst = i.OutputSimd128Register();
       XMMRegister src1 = i.InputSimd128Register(0);
       Operand src2 = i.InputOperand(1);
@@ -2637,7 +2642,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     }
     case kSSEI16x8GeU: {
       DCHECK_EQ(i.OutputSimd128Register(), i.InputSimd128Register(0));
-      CpuFeatureScope sse_scope(tasm(), SSE4_1);
+      CpuFeatureScope sse_scope(masm(), SSE4_1);
       XMMRegister dst = i.OutputSimd128Register();
       Operand src = i.InputOperand(1);
       __ pminuw(dst, src);
@@ -2645,7 +2650,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
     case kAVXI16x8GeU: {
-      CpuFeatureScope avx_scope(tasm(), AVX);
+      CpuFeatureScope avx_scope(masm(), AVX);
       XMMRegister src1 = i.InputSimd128Register(0);
       Operand src2 = i.InputOperand(1);
       __ vpminuw(kScratchDoubleReg, src1, src2);
@@ -2838,7 +2843,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
     case kAVXI8x16Ne: {
-      CpuFeatureScope avx_scope(tasm(), AVX);
+      CpuFeatureScope avx_scope(masm(), AVX);
       __ vpcmpeqb(i.OutputSimd128Register(), i.InputSimd128Register(0),
                   i.InputOperand(1));
       __ vpcmpeqb(kScratchDoubleReg, kScratchDoubleReg, kScratchDoubleReg);
@@ -2853,7 +2858,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     }
     case kSSEI8x16GeS: {
       DCHECK_EQ(i.OutputSimd128Register(), i.InputSimd128Register(0));
-      CpuFeatureScope sse_scope(tasm(), SSE4_1);
+      CpuFeatureScope sse_scope(masm(), SSE4_1);
       XMMRegister dst = i.OutputSimd128Register();
       Operand src = i.InputOperand(1);
       __ pminsb(dst, src);
@@ -2861,7 +2866,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
     case kAVXI8x16GeS: {
-      CpuFeatureScope avx_scope(tasm(), AVX);
+      CpuFeatureScope avx_scope(masm(), AVX);
       XMMRegister src1 = i.InputSimd128Register(0);
       Operand src2 = i.InputOperand(1);
       __ vpminsb(kScratchDoubleReg, src1, src2);
@@ -2919,7 +2924,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
     case kAVXI8x16GtU: {
-      CpuFeatureScope avx_scope(tasm(), AVX);
+      CpuFeatureScope avx_scope(masm(), AVX);
       XMMRegister dst = i.OutputSimd128Register();
       XMMRegister src1 = i.InputSimd128Register(0);
       Operand src2 = i.InputOperand(1);
@@ -2938,7 +2943,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
     case kAVXI8x16GeU: {
-      CpuFeatureScope avx_scope(tasm(), AVX);
+      CpuFeatureScope avx_scope(masm(), AVX);
       XMMRegister src1 = i.InputSimd128Register(0);
       Operand src2 = i.InputOperand(1);
       __ vpminub(kScratchDoubleReg, src1, src2);
@@ -3177,7 +3182,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       XMMRegister src = i.InputSimd128Register(0);
       uint8_t lane = i.InputUint8(1) & 0xf;
       if (CpuFeatures::IsSupported(AVX)) {
-        CpuFeatureScope avx_scope(tasm(), AVX);
+        CpuFeatureScope avx_scope(masm(), AVX);
         if (lane < 8) {
           __ vpunpcklbw(dst, src, src);
         } else {
@@ -3228,7 +3233,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       ASSEMBLE_SIMD_PUNPCK_SHUFFLE(punpcklbw);
       break;
     case kSSES16x8UnzipHigh: {
-      CpuFeatureScope sse_scope(tasm(), SSE4_1);
+      CpuFeatureScope sse_scope(masm(), SSE4_1);
       XMMRegister dst = i.OutputSimd128Register();
       XMMRegister src2 = dst;
       DCHECK_EQ(dst, i.InputSimd128Register(0));
@@ -3242,7 +3247,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
     case kAVXS16x8UnzipHigh: {
-      CpuFeatureScope avx_scope(tasm(), AVX);
+      CpuFeatureScope avx_scope(masm(), AVX);
       XMMRegister dst = i.OutputSimd128Register();
       XMMRegister src2 = dst;
       if (instr->InputCount() == 2) {
@@ -3254,7 +3259,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
     case kSSES16x8UnzipLow: {
-      CpuFeatureScope sse_scope(tasm(), SSE4_1);
+      CpuFeatureScope sse_scope(masm(), SSE4_1);
       XMMRegister dst = i.OutputSimd128Register();
       XMMRegister src2 = dst;
       DCHECK_EQ(dst, i.InputSimd128Register(0));
@@ -3268,7 +3273,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
     case kAVXS16x8UnzipLow: {
-      CpuFeatureScope avx_scope(tasm(), AVX);
+      CpuFeatureScope avx_scope(masm(), AVX);
       XMMRegister dst = i.OutputSimd128Register();
       XMMRegister src2 = dst;
       __ vpxor(kScratchDoubleReg, kScratchDoubleReg, kScratchDoubleReg);
@@ -3295,7 +3300,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
     case kAVXS8x16UnzipHigh: {
-      CpuFeatureScope avx_scope(tasm(), AVX);
+      CpuFeatureScope avx_scope(masm(), AVX);
       XMMRegister dst = i.OutputSimd128Register();
       XMMRegister src2 = dst;
       if (instr->InputCount() == 2) {
@@ -3322,7 +3327,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
     case kAVXS8x16UnzipLow: {
-      CpuFeatureScope avx_scope(tasm(), AVX);
+      CpuFeatureScope avx_scope(masm(), AVX);
       XMMRegister dst = i.OutputSimd128Register();
       XMMRegister src2 = dst;
       if (instr->InputCount() == 2) {
@@ -3351,7 +3356,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
     case kAVXS8x16TransposeLow: {
-      CpuFeatureScope avx_scope(tasm(), AVX);
+      CpuFeatureScope avx_scope(masm(), AVX);
       XMMRegister dst = i.OutputSimd128Register();
       if (instr->InputCount() == 1) {
         __ vpsllw(kScratchDoubleReg, i.InputSimd128Register(0), 8);
@@ -3381,7 +3386,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     }
     case kAVXS8x16TransposeHigh: {
-      CpuFeatureScope avx_scope(tasm(), AVX);
+      CpuFeatureScope avx_scope(masm(), AVX);
       XMMRegister dst = i.OutputSimd128Register();
       if (instr->InputCount() == 1) {
         __ vpsrlw(dst, i.InputSimd128Register(0), 8);
@@ -3417,7 +3422,7 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
     case kAVXS8x4Reverse:
     case kAVXS8x8Reverse: {
       DCHECK_EQ(1, instr->InputCount());
-      CpuFeatureScope avx_scope(tasm(), AVX);
+      CpuFeatureScope avx_scope(masm(), AVX);
       XMMRegister dst = i.OutputSimd128Register();
       XMMRegister src = dst;
       if (arch_opcode != kAVXS8x2Reverse) {
@@ -3459,6 +3464,16 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       break;
     case kIA32I8x16AllTrue: {
       ASSEMBLE_SIMD_ALL_TRUE(pcmpeqb);
+      break;
+    }
+    case kIA32Blendvpd: {
+      __ Blendvpd(i.OutputSimd128Register(), i.InputSimd128Register(0),
+                  i.InputSimd128Register(1), i.InputSimd128Register(2));
+      break;
+    }
+    case kIA32Blendvps: {
+      __ Blendvps(i.OutputSimd128Register(), i.InputSimd128Register(0),
+                  i.InputSimd128Register(1), i.InputSimd128Register(2));
       break;
     }
     case kIA32Pblendvb: {
@@ -3760,29 +3775,15 @@ void CodeGenerator::AssembleArchTrap(Instruction* instr,
 
    private:
     void GenerateCallToTrap(TrapId trap_id) {
-      if (trap_id == TrapId::kInvalid) {
-        // We cannot test calls to the runtime in cctest/test-run-wasm.
-        // Therefore we emit a call to C here instead of a call to the runtime.
-        __ PrepareCallCFunction(0, esi);
-        __ CallCFunction(
-            ExternalReference::wasm_call_trap_callback_for_testing(), 0);
-        __ LeaveFrame(StackFrame::WASM);
-        auto call_descriptor = gen_->linkage()->GetIncomingDescriptor();
-        size_t pop_size =
-            call_descriptor->ParameterSlotCount() * kSystemPointerSize;
-        // Use ecx as a scratch register, we return anyways immediately.
-        __ Ret(static_cast<int>(pop_size), ecx);
-      } else {
-        gen_->AssembleSourcePosition(instr_);
-        // A direct call to a wasm runtime stub defined in this module.
-        // Just encode the stub index. This will be patched when the code
-        // is added to the native module and copied into wasm code space.
-        __ wasm_call(static_cast<Address>(trap_id), RelocInfo::WASM_STUB_CALL);
-        ReferenceMap* reference_map =
-            gen_->zone()->New<ReferenceMap>(gen_->zone());
-        gen_->RecordSafepoint(reference_map);
-        __ AssertUnreachable(AbortReason::kUnexpectedReturnFromWasmTrap);
-      }
+      gen_->AssembleSourcePosition(instr_);
+      // A direct call to a wasm runtime stub defined in this module.
+      // Just encode the stub index. This will be patched when the code
+      // is added to the native module and copied into wasm code space.
+      __ wasm_call(static_cast<Address>(trap_id), RelocInfo::WASM_STUB_CALL);
+      ReferenceMap* reference_map =
+          gen_->zone()->New<ReferenceMap>(gen_->zone());
+      gen_->RecordSafepoint(reference_map);
+      __ AssertUnreachable(AbortReason::kUnexpectedReturnFromWasmTrap);
     }
 
     Instruction* instr_;
@@ -3855,7 +3856,7 @@ void CodeGenerator::AssembleArchTableSwitch(Instruction* instr) {
   IA32OperandConverter i(this, instr);
   Register input = i.InputRegister(0);
   size_t const case_count = instr->InputCount() - 2;
-  Label** cases = zone()->NewArray<Label*>(case_count);
+  Label** cases = zone()->AllocateArray<Label*>(case_count);
   for (size_t index = 0; index < case_count; ++index) {
     cases[index] = GetLabel(i.InputRpo(index + 2));
   }
@@ -4026,6 +4027,10 @@ void CodeGenerator::AssembleConstructFrame() {
       if (call_descriptor->IsWasmFunctionCall() ||
           call_descriptor->IsWasmImportWrapper() ||
           call_descriptor->IsWasmCapiFunction()) {
+        // For import wrappers and C-API functions, this stack slot is only used
+        // for printing stack traces in V8. Also, it holds a WasmApiFunctionRef
+        // instead of the instance itself, which is taken care of in the frames
+        // accessors.
         __ push(kWasmInstanceRegister);
       }
       if (call_descriptor->IsWasmCapiFunction()) {
@@ -4079,7 +4084,7 @@ void CodeGenerator::AssembleConstructFrame() {
         __ j(above_equal, &done, Label::kNear);
       }
 
-      __ wasm_call(wasm::WasmCode::kWasmStackOverflow,
+      __ wasm_call(static_cast<Address>(Builtin::kWasmStackOverflow),
                    RelocInfo::WASM_STUB_CALL);
       // The call does not return, hence we can ignore any references and just
       // define an empty safepoint.
@@ -4185,8 +4190,8 @@ void CodeGenerator::AssembleReturn(InstructionOperand* additional_pop_count) {
     __ j(greater, &mismatch_return, Label::kNear);
     __ Ret(parameter_slots * kSystemPointerSize, scratch_reg);
     __ bind(&mismatch_return);
-    __ DropArguments(argc_reg, scratch_reg, TurboAssembler::kCountIsInteger,
-                     TurboAssembler::kCountIncludesReceiver);
+    __ DropArguments(argc_reg, scratch_reg, MacroAssembler::kCountIsInteger,
+                     MacroAssembler::kCountIncludesReceiver);
     // We use a return instead of a jump for better return address prediction.
     __ Ret();
   } else if (additional_pop_count->IsImmediate()) {
@@ -4204,7 +4209,7 @@ void CodeGenerator::AssembleReturn(InstructionOperand* additional_pop_count) {
     }
   } else {
     Register pop_reg = g.ToRegister(additional_pop_count);
-    Register scratch_reg = pop_reg == ecx ? edx : ecx;
+    Register scratch_reg = pop_reg == ecx ? edi : ecx;
     DCHECK(!call_descriptor->CalleeSavedRegisters().has(scratch_reg));
     DCHECK(!call_descriptor->CalleeSavedRegisters().has(pop_reg));
     int pop_size = static_cast<int>(parameter_slots * kSystemPointerSize);
@@ -4221,10 +4226,66 @@ void CodeGenerator::FinishCode() {}
 void CodeGenerator::PrepareForDeoptimizationExits(
     ZoneDeque<DeoptimizationExit*>* exits) {}
 
-void CodeGenerator::MoveToTempLocation(InstructionOperand* source) {
+AllocatedOperand CodeGenerator::Push(InstructionOperand* source) {
+  auto rep = LocationOperand::cast(source)->representation();
+  int new_slots = ElementSizeInPointers(rep);
+  IA32OperandConverter g(this, nullptr);
+  int last_frame_slot_id =
+      frame_access_state_->frame()->GetTotalFrameSlotCount() - 1;
+  int sp_delta = frame_access_state_->sp_delta();
+  int slot_id = last_frame_slot_id + sp_delta + new_slots;
+  AllocatedOperand stack_slot(LocationOperand::STACK_SLOT, rep, slot_id);
+  if (source->IsRegister()) {
+    __ push(g.ToRegister(source));
+    frame_access_state()->IncreaseSPDelta(new_slots);
+  } else if (source->IsStackSlot() || source->IsFloatStackSlot()) {
+    __ push(g.ToOperand(source));
+    frame_access_state()->IncreaseSPDelta(new_slots);
+  } else {
+    // No push instruction for this operand type. Bump the stack pointer and
+    // assemble the move.
+    __ sub(esp, Immediate(new_slots * kSystemPointerSize));
+    frame_access_state()->IncreaseSPDelta(new_slots);
+    AssembleMove(source, &stack_slot);
+  }
+  temp_slots_ += new_slots;
+  return stack_slot;
+}
+
+void CodeGenerator::Pop(InstructionOperand* dest, MachineRepresentation rep) {
+  IA32OperandConverter g(this, nullptr);
+  int dropped_slots = ElementSizeInPointers(rep);
+  if (dest->IsRegister()) {
+    frame_access_state()->IncreaseSPDelta(-dropped_slots);
+    __ pop(g.ToRegister(dest));
+  } else if (dest->IsStackSlot() || dest->IsFloatStackSlot()) {
+    frame_access_state()->IncreaseSPDelta(-dropped_slots);
+    __ pop(g.ToOperand(dest));
+  } else {
+    int last_frame_slot_id =
+        frame_access_state_->frame()->GetTotalFrameSlotCount() - 1;
+    int sp_delta = frame_access_state_->sp_delta();
+    int slot_id = last_frame_slot_id + sp_delta;
+    AllocatedOperand stack_slot(LocationOperand::STACK_SLOT, rep, slot_id);
+    AssembleMove(&stack_slot, dest);
+    frame_access_state()->IncreaseSPDelta(-dropped_slots);
+    __ add(esp, Immediate(dropped_slots * kSystemPointerSize));
+  }
+  temp_slots_ -= dropped_slots;
+}
+
+void CodeGenerator::PopTempStackSlots() {
+  if (temp_slots_ > 0) {
+    frame_access_state()->IncreaseSPDelta(-temp_slots_);
+    __ add(esp, Immediate(temp_slots_ * kSystemPointerSize));
+    temp_slots_ = 0;
+  }
+}
+
+void CodeGenerator::MoveToTempLocation(InstructionOperand* source,
+                                       MachineRepresentation rep) {
   // Must be kept in sync with {MoveTempLocationTo}.
   DCHECK(!source->IsImmediate());
-  auto rep = LocationOperand::cast(source)->representation();
   if ((IsFloatingPoint(rep) &&
        !move_cycle_.pending_double_scratch_register_use)) {
     // The scratch double register is available.
@@ -4233,24 +4294,7 @@ void CodeGenerator::MoveToTempLocation(InstructionOperand* source) {
     AssembleMove(source, &scratch);
   } else {
     // The scratch register blocked by pending moves. Use the stack instead.
-    int new_slots = ElementSizeInPointers(rep);
-    IA32OperandConverter g(this, nullptr);
-    if (source->IsRegister()) {
-      __ push(g.ToRegister(source));
-    } else if (source->IsStackSlot() || source->IsFloatStackSlot()) {
-      __ push(g.ToOperand(source));
-    } else {
-      // No push instruction for this operand type. Bump the stack pointer and
-      // assemble the move.
-      int last_frame_slot_id =
-          frame_access_state_->frame()->GetTotalFrameSlotCount() - 1;
-      int sp_delta = frame_access_state_->sp_delta();
-      int temp_slot = last_frame_slot_id + sp_delta + new_slots;
-      __ sub(esp, Immediate(new_slots * kSystemPointerSize));
-      AllocatedOperand temp(LocationOperand::STACK_SLOT, rep, temp_slot);
-      AssembleMove(source, &temp);
-    }
-    frame_access_state()->IncreaseSPDelta(new_slots);
+    Push(source);
   }
 }
 
@@ -4262,22 +4306,7 @@ void CodeGenerator::MoveTempLocationTo(InstructionOperand* dest,
                              kScratchDoubleReg.code());
     AssembleMove(&scratch, dest);
   } else {
-    IA32OperandConverter g(this, nullptr);
-    int new_slots = ElementSizeInPointers(rep);
-    frame_access_state()->IncreaseSPDelta(-new_slots);
-    if (dest->IsRegister()) {
-      __ pop(g.ToRegister(dest));
-    } else if (dest->IsStackSlot() || dest->IsFloatStackSlot()) {
-      __ pop(g.ToOperand(dest));
-    } else {
-      int last_frame_slot_id =
-          frame_access_state_->frame()->GetTotalFrameSlotCount() - 1;
-      int sp_delta = frame_access_state_->sp_delta();
-      int temp_slot = last_frame_slot_id + sp_delta + new_slots;
-      AllocatedOperand temp(LocationOperand::STACK_SLOT, rep, temp_slot);
-      AssembleMove(&temp, dest);
-      __ add(esp, Immediate(new_slots * kSystemPointerSize));
-    }
+    Pop(dest, rep);
   }
   move_cycle_ = MoveCycleState();
 }

@@ -11,6 +11,7 @@
 #include "src/heap/cppgc-js/cpp-heap.h"
 #include "src/heap/heap.h"
 #include "src/objects/objects-inl.h"
+#include "test/unittests/heap/heap-utils.h"
 
 namespace v8 {
 namespace internal {
@@ -24,6 +25,9 @@ UnifiedHeapTest::UnifiedHeapTest(
           V8::GetCurrentPlatform(),
           CppHeapCreateParams{std::move(custom_spaces),
                               WrapperHelper::DefaultWrapperDescriptor()})) {
+  // --stress-incremental-marking may have started an incremental GC at this
+  // point already.
+  InvokeAtomicMajorGC();
   isolate()->heap()->AttachCppHeap(cpp_heap_.get());
 }
 
@@ -32,7 +36,7 @@ void UnifiedHeapTest::CollectGarbageWithEmbedderStack(
   EmbedderStackStateScope stack_scope(
       heap(), EmbedderStackStateScope::kExplicitInvocation,
       StackState::kMayContainHeapPointers);
-  CollectGarbage(OLD_SPACE);
+  InvokeMajorGC();
   if (sweeping_type == cppgc::Heap::SweepingType::kAtomic) {
     cpp_heap().AsBase().sweeper().FinishIfRunning();
   }
@@ -43,7 +47,28 @@ void UnifiedHeapTest::CollectGarbageWithoutEmbedderStack(
   EmbedderStackStateScope stack_scope(
       heap(), EmbedderStackStateScope::kExplicitInvocation,
       StackState::kNoHeapPointers);
-  CollectGarbage(OLD_SPACE);
+  InvokeMajorGC();
+  if (sweeping_type == cppgc::Heap::SweepingType::kAtomic) {
+    cpp_heap().AsBase().sweeper().FinishIfRunning();
+  }
+}
+
+void UnifiedHeapTest::CollectYoungGarbageWithEmbedderStack(
+    cppgc::Heap::SweepingType sweeping_type) {
+  EmbedderStackStateScope stack_scope(
+      heap(), EmbedderStackStateScope::kExplicitInvocation,
+      StackState::kMayContainHeapPointers);
+  InvokeMinorGC();
+  if (sweeping_type == cppgc::Heap::SweepingType::kAtomic) {
+    cpp_heap().AsBase().sweeper().FinishIfRunning();
+  }
+}
+void UnifiedHeapTest::CollectYoungGarbageWithoutEmbedderStack(
+    cppgc::Heap::SweepingType sweeping_type) {
+  EmbedderStackStateScope stack_scope(
+      heap(), EmbedderStackStateScope::kExplicitInvocation,
+      StackState::kNoHeapPointers);
+  InvokeMinorGC();
   if (sweeping_type == cppgc::Heap::SweepingType::kAtomic) {
     cpp_heap().AsBase().sweeper().FinishIfRunning();
   }
@@ -78,7 +103,7 @@ v8::Local<v8::Object> WrapperHelper::CreateWrapper(
   SetWrappableConnection(instance, wrappable_type, wrappable_object);
   CHECK(!instance.IsEmpty());
   i::Handle<i::JSReceiver> js_obj = v8::Utils::OpenHandle(*instance);
-  CHECK_EQ(i::JS_API_OBJECT_TYPE, js_obj->map().instance_type());
+  CHECK_EQ(i::JS_API_OBJECT_TYPE, js_obj->map()->instance_type());
   return scope.Escape(instance);
 }
 

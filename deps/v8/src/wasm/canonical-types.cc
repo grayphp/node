@@ -4,6 +4,7 @@
 
 #include "src/wasm/canonical-types.h"
 
+#include "src/wasm/std-object-sizes.h"
 #include "src/wasm/wasm-engine.h"
 
 namespace v8 {
@@ -14,12 +15,22 @@ TypeCanonicalizer* GetTypeCanonicalizer() {
   return GetWasmEngine()->type_canonicalizer();
 }
 
+TypeCanonicalizer::TypeCanonicalizer() {
+  AddPredefinedArrayType(kPredefinedArrayI8Index, kWasmI8);
+  AddPredefinedArrayType(kPredefinedArrayI16Index, kWasmI16);
+}
+
 void TypeCanonicalizer::AddRecursiveGroup(WasmModule* module, uint32_t size) {
+  AddRecursiveGroup(module, size,
+                    static_cast<uint32_t>(module->types.size() - size));
+}
+
+void TypeCanonicalizer::AddRecursiveGroup(WasmModule* module, uint32_t size,
+                                          uint32_t start_index) {
   // Multiple threads could try to register recursive groups concurrently.
   // TODO(manoskouk): Investigate if we can fine-grain the synchronization.
   base::MutexGuard mutex_guard(&mutex_);
-  DCHECK_GE(module->types.size(), size);
-  uint32_t start_index = static_cast<uint32_t>(module->types.size()) - size;
+  DCHECK_GE(module->types.size(), start_index + size);
   CanonicalGroup group;
   group.types.resize(size);
   for (uint32_t i = 0; i < size; i++) {
@@ -63,7 +74,8 @@ uint32_t TypeCanonicalizer::AddRecursiveGroup(const FunctionSig* sig) {
 #endif
   CanonicalGroup group;
   group.types.resize(1);
-  group.types[0].type_def = TypeDefinition(sig, kNoSuperType);
+  group.types[0].type_def =
+      TypeDefinition(sig, kNoSuperType, v8_flags.wasm_final_types);
   group.types[0].is_relative_supertype = false;
   int canonical_index = FindCanonicalGroup(group);
   if (canonical_index < 0) {
@@ -75,12 +87,28 @@ uint32_t TypeCanonicalizer::AddRecursiveGroup(const FunctionSig* sig) {
     for (auto type : sig->returns()) builder.AddReturn(type);
     for (auto type : sig->parameters()) builder.AddParam(type);
     const FunctionSig* allocated_sig = builder.Build();
-    group.types[0].type_def = TypeDefinition(allocated_sig, kNoSuperType);
+    group.types[0].type_def =
+        TypeDefinition(allocated_sig, kNoSuperType, v8_flags.wasm_final_types);
     group.types[0].is_relative_supertype = false;
     canonical_groups_.emplace(group, canonical_index);
     canonical_supertypes_.emplace_back(kNoSuperType);
   }
   return canonical_index;
+}
+
+void TypeCanonicalizer::AddPredefinedArrayType(uint32_t index,
+                                               ValueType element_type) {
+  DCHECK_EQ(index, canonical_groups_.size());
+  CanonicalGroup group;
+  group.types.resize(1);
+  static constexpr bool kMutable = true;
+  // TODO(jkummerow): Decide whether this should be final or nonfinal.
+  static constexpr bool kFinal = true;
+  ArrayType* type = zone_.New<ArrayType>(element_type, kMutable);
+  group.types[0].type_def = TypeDefinition(type, kNoSuperType, kFinal);
+  group.types[0].is_relative_supertype = false;
+  canonical_groups_.emplace(group, index);
+  canonical_supertypes_.emplace_back(kNoSuperType);
 }
 
 ValueType TypeCanonicalizer::CanonicalizeValueType(
@@ -95,23 +123,28 @@ ValueType TypeCanonicalizer::CanonicalizeValueType(
                    module->isorecursive_canonical_type_ids[type.ref_index()]);
 }
 
-bool TypeCanonicalizer::IsCanonicalSubtype(uint32_t sub_index,
-                                           uint32_t super_index,
-                                           const WasmModule* sub_module,
-                                           const WasmModule* super_module) {
+bool TypeCanonicalizer::IsCanonicalSubtype(uint32_t canonical_sub_index,
+                                           uint32_t canonical_super_index) {
   // Multiple threads could try to register and access recursive groups
   // concurrently.
   // TODO(manoskouk): Investigate if we can improve this synchronization.
   base::MutexGuard mutex_guard(&mutex_);
+  while (canonical_sub_index != kNoSuperType) {
+    if (canonical_sub_index == canonical_super_index) return true;
+    canonical_sub_index = canonical_supertypes_[canonical_sub_index];
+  }
+  return false;
+}
+
+bool TypeCanonicalizer::IsCanonicalSubtype(uint32_t sub_index,
+                                           uint32_t super_index,
+                                           const WasmModule* sub_module,
+                                           const WasmModule* super_module) {
   uint32_t canonical_super =
       super_module->isorecursive_canonical_type_ids[super_index];
   uint32_t canonical_sub =
       sub_module->isorecursive_canonical_type_ids[sub_index];
-  while (canonical_sub != kNoSuperType) {
-    if (canonical_sub == canonical_super) return true;
-    canonical_sub = canonical_supertypes_[canonical_sub];
-  }
-  return false;
+  return IsCanonicalSubtype(canonical_sub, canonical_super);
 }
 
 TypeCanonicalizer::CanonicalType TypeCanonicalizer::CanonicalizeTypeDef(
@@ -140,7 +173,8 @@ TypeCanonicalizer::CanonicalType TypeCanonicalizer::CanonicalizeTypeDef(
         builder.AddParam(
             CanonicalizeValueType(module, param, recursive_group_start));
       }
-      result = TypeDefinition(builder.Build(), canonical_supertype);
+      result =
+          TypeDefinition(builder.Build(), canonical_supertype, type.is_final);
       break;
     }
     case TypeDefinition::kStruct: {
@@ -149,9 +183,13 @@ TypeCanonicalizer::CanonicalType TypeCanonicalizer::CanonicalizeTypeDef(
       for (uint32_t i = 0; i < original_type->field_count(); i++) {
         builder.AddField(CanonicalizeValueType(module, original_type->field(i),
                                                recursive_group_start),
-                         original_type->mutability(i));
+                         original_type->mutability(i),
+                         original_type->field_offset(i));
       }
-      result = TypeDefinition(builder.Build(), canonical_supertype);
+      builder.set_total_fields_size(original_type->total_fields_size());
+      result = TypeDefinition(
+          builder.Build(StructType::Builder::kUseProvidedOffsets),
+          canonical_supertype, type.is_final);
       break;
     }
     case TypeDefinition::kArray: {
@@ -159,7 +197,7 @@ TypeCanonicalizer::CanonicalType TypeCanonicalizer::CanonicalizeTypeDef(
           module, type.array_type->element_type(), recursive_group_start);
       result = TypeDefinition(
           zone_.New<ArrayType>(element_type, type.array_type->mutability()),
-          canonical_supertype);
+          canonical_supertype, type.is_final);
       break;
     }
   }
@@ -172,6 +210,20 @@ TypeCanonicalizer::CanonicalType TypeCanonicalizer::CanonicalizeTypeDef(
 int TypeCanonicalizer::FindCanonicalGroup(CanonicalGroup& group) const {
   auto element = canonical_groups_.find(group);
   return element == canonical_groups_.end() ? -1 : element->second;
+}
+
+size_t TypeCanonicalizer::EstimateCurrentMemoryConsumption() const {
+  UPDATE_WHEN_CLASS_CHANGES(TypeCanonicalizer, 232);
+  size_t result = ContentSize(canonical_supertypes_);
+  result += ContentSize(canonical_groups_);
+  for (auto& entry : canonical_groups_) {
+    result += ContentSize(entry.first.types);
+  }
+  result += allocator_.GetCurrentMemoryUsage();
+  if (v8_flags.trace_wasm_offheap_memory) {
+    PrintF("TypeCanonicalizer: %zu\n", result);
+  }
+  return result;
 }
 
 }  // namespace wasm

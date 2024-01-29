@@ -35,11 +35,17 @@ class StressConcurrentAllocatorTask : public CancelableTask {
 // Allocations are served from a TLAB if possible.
 class ConcurrentAllocator {
  public:
+  enum class Context {
+    kGC,
+    kNotGC,
+  };
+
   static constexpr int kMinLabSize = 4 * KB;
   static constexpr int kMaxLabSize = 32 * KB;
   static constexpr int kMaxLabObjectSize = 2 * KB;
 
-  ConcurrentAllocator(LocalHeap* local_heap, PagedSpace* space);
+  ConcurrentAllocator(LocalHeap* local_heap, PagedSpace* space,
+                      Context context);
 
   inline AllocationResult AllocateRaw(int object_size,
                                       AllocationAlignment alignment,
@@ -49,6 +55,9 @@ class ConcurrentAllocator {
   void MakeLinearAllocationAreaIterable();
   void MarkLinearAllocationAreaBlack();
   void UnmarkLinearAllocationArea();
+
+  // Checks whether the LAB is currently in use.
+  V8_INLINE bool IsLabValid() { return lab_.top() != kNullAddress; }
 
  private:
   static_assert(
@@ -73,20 +82,23 @@ class ConcurrentAllocator {
       size_t min_size_in_bytes, size_t max_size_in_bytes,
       AllocationOrigin origin);
 
+  base::Optional<std::pair<Address, size_t>> TryFreeListAllocation(
+      size_t min_size_in_bytes, size_t max_size_in_bytes,
+      AllocationOrigin origin);
+
   V8_EXPORT_PRIVATE AllocationResult
   AllocateOutsideLab(int size_in_bytes, AllocationAlignment alignment,
                      AllocationOrigin origin);
 
   bool IsBlackAllocationEnabled() const;
 
-  // Checks whether the LAB is currently in use.
-  V8_INLINE bool IsLabValid() { return lab_.top() != kNullAddress; }
-
   // Resets the LAB.
   void ResetLab() { lab_ = LinearAllocationArea(kNullAddress, kNullAddress); }
 
   // Installs a filler object between the LABs top and limit pointers.
   void MakeLabIterable();
+
+  AllocationSpace identity() const;
 
   // Returns the Heap of space_. This might differ from the LocalHeap's Heap for
   // shared spaces.
@@ -96,6 +108,7 @@ class ConcurrentAllocator {
   PagedSpace* const space_;
   Heap* const owning_heap_;
   LinearAllocationArea lab_;
+  const Context context_;
 };
 
 }  // namespace internal

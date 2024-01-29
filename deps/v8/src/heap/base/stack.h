@@ -5,6 +5,8 @@
 #ifndef V8_HEAP_BASE_STACK_H_
 #define V8_HEAP_BASE_STACK_H_
 
+#include <vector>
+
 #include "src/base/macros.h"
 #include "src/base/platform/platform.h"
 
@@ -20,104 +22,92 @@ class StackVisitor {
 // - native stack;
 // - ASAN/MSAN;
 // - SafeStack: https://releases.llvm.org/10.0.0/tools/clang/docs/SafeStack.html
+//
+// Stacks grow down, so throughout this class "start" refers the highest
+// address of the stack, and top/marker the lowest.
+//
+// TODO(chromium:1056170): Consider adding a component that keeps track
+// of relevant GC stack regions where interesting pointers can be found.
 class V8_EXPORT_PRIVATE Stack final {
  public:
-  // The following constant is architecture-specific. The size of the buffer
-  // for storing the callee-saved registers is going to be equal to
-  // NumberOfCalleeSavedRegisters * sizeof(intptr_t).
-
-#if V8_HOST_ARCH_IA32
-  // Must be consistent with heap/base/asm/ia32/.
-  static constexpr int NumberOfCalleeSavedRegisters = 3;
-#elif V8_HOST_ARCH_X64
-#ifdef _WIN64
-  // Must be consistent with heap/base/asm/x64/.
-  static constexpr int NumberOfCalleeSavedRegisters = 28;
-#else   // !_WIN64
-  // Must be consistent with heap/base/asm/x64/.
-  static constexpr int NumberOfCalleeSavedRegisters = 5;
-#endif  // !_WIN64
-#elif V8_HOST_ARCH_ARM64
-  // Must be consistent with heap/base/asm/arm64/.
-  static constexpr int NumberOfCalleeSavedRegisters = 11;
-#elif V8_HOST_ARCH_ARM
-  // Must be consistent with heap/base/asm/arm/.
-  static constexpr int NumberOfCalleeSavedRegisters = 8;
-#elif V8_HOST_ARCH_PPC64
-  // Must be consistent with heap/base/asm/ppc/.
-  static constexpr int NumberOfCalleeSavedRegisters = 20;
-#elif V8_HOST_ARCH_PPC
-  // Must be consistent with heap/base/asm/ppc/.
-  static constexpr int NumberOfCalleeSavedRegisters = 20;
-#elif V8_HOST_ARCH_MIPS64
-  // Must be consistent with heap/base/asm/mips64el/.
-  static constexpr int NumberOfCalleeSavedRegisters = 9;
-#elif V8_HOST_ARCH_LOONG64
-  // Must be consistent with heap/base/asm/loong64/.
-  static constexpr int NumberOfCalleeSavedRegisters = 11;
-#elif V8_HOST_ARCH_S390
-  // Must be consistent with heap/base/asm/s390/.
-  static constexpr int NumberOfCalleeSavedRegisters = 10;
-#elif V8_HOST_ARCH_RISCV32
-  // Must be consistent with heap/base/asm/riscv/.
-  static constexpr int NumberOfCalleeSavedRegisters = 12;
-#elif V8_HOST_ARCH_RISCV64
-  // Must be consistent with heap/base/asm/riscv/.
-  static constexpr int NumberOfCalleeSavedRegisters = 12;
-#else
-#error Unknown architecture.
-#endif
-
-  explicit Stack(const void* stack_start = nullptr);
+  explicit Stack(const void* stack_start = nullptr)
+      : stack_start_(stack_start) {}
 
   // Sets the start of the stack.
-  void SetStackStart(const void* stack_start);
+  void SetStackStart(const void* stack_start) { stack_start_ = stack_start; }
 
   // Returns true if |slot| is part of the stack and false otherwise.
   bool IsOnStack(const void* slot) const;
 
-  // Word-aligned iteration of the stack. Callee-saved registers are pushed to
-  // the stack before iterating pointers. Slot values are passed on to
-  // `visitor`.
-  void IteratePointers(StackVisitor* visitor) const;
+  // Word-aligned iteration of the stack, starting at the `stack_marker_`
+  // and going to the stack start. Slot values are passed on to `visitor`.
+  void IteratePointersUntilMarker(StackVisitor* visitor) const;
 
-  // Word-aligned iteration of the stack, starting at `stack_end`. Slot values
-  // are passed on to `visitor`. This is intended to be used with verifiers that
-  // only visit a subset of the stack of IteratePointers().
-  //
-  // **Ignores:**
-  // - Callee-saved registers.
-  // - SafeStack.
-  void IteratePointersUnsafe(StackVisitor* visitor,
-                             const void* stack_end) const;
+  void AddStackSegment(const void* start, const void* top);
+  void ClearStackSegments();
 
-  // Returns the start of the stack.
-  const void* stack_start() const { return stack_start_; }
+  // Push callee-saved registers to the stack, set the stack marker to the
+  // current stack top and invoke the callback.
+  template <typename Callback>
+  V8_INLINE void SetMarkerAndCallback(Callback callback) {
+    SetMarkerAndCallbackHelper(static_cast<void*>(&callback),
+                               &SetMarkerAndCallbackImpl<Callback>);
+  }
 
-  // Sets, clears and gets the stack marker.
-  void set_marker(const void* stack_marker);
-  void clear_marker();
-  const void* get_marker() const;
+  template <typename Callback>
+  V8_INLINE void SetMarkerIfNeededAndCallback(Callback callback) {
+    if (stack_marker_ == nullptr) {
+      SetMarkerAndCallbackHelper(static_cast<void*>(&callback),
+                                 &SetMarkerAndCallbackImpl<Callback>);
+    } else {
+      DCHECK(IsOnCurrentStack(stack_marker_));
+      callback();
+    }
+  }
 
-  // Mechanism for saving the callee-saved registers, required for conservative
-  // stack scanning.
+  using IterateStackCallback = void (*)(Stack*, void*, const void*);
 
-  struct CalleeSavedRegisters {
-    // We always double-align this buffer, to support for longer registers,
-    // e.g., 128-bit registers in WIN64.
-    alignas(2 * sizeof(intptr_t))
-        std::array<intptr_t, NumberOfCalleeSavedRegisters> buffer;
-  };
+  // This method combines SetMarkerAndCallback with IteratePointersUntilMarker.
+  // Callee-saved registers are pushed to the stack and then a word-aligned
+  // iteration of the stack is performed. Slot values are passed on to
+  // `visitor`. To be used for testing.
+  void IteratePointersForTesting(StackVisitor* visitor);
 
-  using Callback = void (*)(StackVisitor*, const void*, const void*,
-                            const CalleeSavedRegisters* registers);
-
-  static V8_NOINLINE void PushAllRegistersAndInvokeCallback(
-      StackVisitor* visitor, const void* stack_start, Callback callback);
+  bool IsMarkerSet() const { return stack_marker_ != nullptr; }
 
  private:
+#ifdef DEBUG
+  static bool IsOnCurrentStack(const void* ptr);
+#endif
+
+  static void IteratePointersImpl(const Stack* stack, void* argument,
+                                  const void* stack_end);
+
+  V8_NOINLINE void SetMarkerAndCallbackHelper(void* argument,
+                                              IterateStackCallback callback);
+
+  template <typename Callback>
+  static void SetMarkerAndCallbackImpl(Stack* stack, void* argument,
+                                       const void* stack_end) {
+    DCHECK_NULL(stack->stack_marker_);
+    stack->stack_marker_ = stack_end;
+    Callback* callback = static_cast<Callback*>(argument);
+    (*callback)();
+    stack->stack_marker_ = nullptr;
+  }
+
   const void* stack_start_;
+
+  // Marker that signals end of the interesting stack region in which on-heap
+  // pointers can be found.
   const void* stack_marker_ = nullptr;
+
+  // Stack segments that may also contain pointers and should be scanned.
+  struct StackSegments {
+    const void* start;
+    const void* top;
+  };
+  std::vector<StackSegments> inactive_stacks_;
 };
 
 }  // namespace heap::base

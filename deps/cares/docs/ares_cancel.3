@@ -13,6 +13,8 @@
 .\" this software for any purpose.  It is provided "as is"
 .\" without express or implied warranty.
 .\"
+.\" SPDX-License-Identifier: MIT
+.\"
 .TH ARES_CANCEL 3 "31 March 2004"
 .SH NAME
 ares_cancel \- Cancel a resolve
@@ -20,7 +22,7 @@ ares_cancel \- Cancel a resolve
 .nf
 #include <ares.h>
 
-void ares_cancel(ares_channel \fIchannel\fP)
+void ares_cancel(ares_channel_t *\fIchannel\fP)
 .fi
 .SH DESCRIPTION
 The \fBares_cancel(3)\fP function cancels all lookups/requests made on the the

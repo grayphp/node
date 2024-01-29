@@ -13,14 +13,16 @@
 .\" this software for any purpose.  It is provided "as is"
 .\" without express or implied warranty.
 .\"
+.\" SPDX-License-Identifier: MIT
+.\"
 .TH ARES_INET_PTON 3 "17 Feb 2013"
 .SH NAME
 ares_inet_pton \- convert an IPv4 or IPv6 address from text to binary form
 .SH SYNOPSIS
 .nf
-.B #include <ares.h>
-.PP
-.B const char *ares_inet_pton(int af, const char *src, void *dst);
+#include <ares.h>
+
+const char *ares_inet_pton(int \fIaf\fP, const char *\fIsrc\fP, void *\fIdst\fP);
 .fi
 .SH DESCRIPTION
 This is a portable version with the identical functionality of the commonly
@@ -34,8 +36,8 @@ in. The \fBdst\fP argument points to a buffer into which the function stores
 the numeric address; this shall be large enough to hold the numeric address
 (32 bits for AF_INET, 128 bits for AF_INET6).
 .SH SEE ALSO
-.BR ares_init(3),
-.BR ares_inet_ntop(3)
+.BR ares_init (3),
+.BR ares_inet_ntop (3)
 .SH AVAILABILITY
 made properly publicly available in c-ares for real in version 1.10.0
 .SH AUTHOR

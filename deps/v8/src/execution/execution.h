@@ -12,9 +12,6 @@ namespace internal {
 
 class MicrotaskQueue;
 
-template <typename T>
-class Handle;
-
 class Execution final : public AllStatic {
  public:
   // Whether to report pending messages, or keep them pending on the isolate.
@@ -77,7 +74,7 @@ class Execution final : public AllStatic {
   // Upon return, either isolate->has_pending_exception() is true, or
   // the function's return values are in {packed_args}.
   V8_EXPORT_PRIVATE static void CallWasm(Isolate* isolate,
-                                         Handle<CodeT> wrapper_code,
+                                         Handle<Code> wrapper_code,
                                          Address wasm_call_target,
                                          Handle<Object> object_ref,
                                          Address packed_args);

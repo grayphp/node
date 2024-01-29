@@ -43,7 +43,7 @@ ac.signal.addEventListener('abort', () => console.log('Aborted!'),
 
 ac.abort();
 
-console.log(ac.signal.aborted);  // Prints True
+console.log(ac.signal.aborted);  // Prints true
 ```
 
 ### `abortController.abort([reason])`
@@ -121,6 +121,20 @@ added:
 
 Returns a new `AbortSignal` which will be aborted in `delay` milliseconds.
 
+#### Static method: `AbortSignal.any(signals)`
+
+<!-- YAML
+added:
+  - v20.3.0
+  - v18.17.0
+-->
+
+* `signals` {AbortSignal\[]} The `AbortSignal`s of which to compose a new `AbortSignal`.
+
+Returns a new `AbortSignal` which will be aborted if any of the provided
+signals are aborted. Its [`abortSignal.reason`][] will be set to whichever
+one of the `signals` caused it to be aborted.
+
 #### Event: `'abort'`
 
 <!-- YAML
@@ -196,7 +210,7 @@ An optional reason specified when the `AbortSignal` was triggered.
 ```js
 const ac = new AbortController();
 ac.abort(new Error('boom!'));
-console.log(ac.signal.reason);  // Error('boom!');
+console.log(ac.signal.reason);  // Error: boom!
 ```
 
 #### `abortSignal.throwIfAborted()`
@@ -464,15 +478,28 @@ added:
   - v17.5.0
   - v16.15.0
 changes:
+  - version:
+    - v21.0.0
+    pr-url: https://github.com/nodejs/node/pull/45684
+    description: No longer experimental.
   - version: v18.0.0
     pr-url: https://github.com/nodejs/node/pull/41811
-    description: No longer behind `--experimental-global-fetch` CLI flag.
+    description: No longer behind `--experimental-fetch` CLI flag.
 -->
 
-> Stability: 1 - Experimental. Disable this API with the [`--no-experimental-fetch`][]
-> CLI flag.
+> Stability: 2 - Stable
 
 A browser-compatible implementation of the [`fetch()`][] function.
+
+## Class: `File`
+
+<!-- YAML
+added: v20.0.0
+-->
+
+<!-- type=global -->
+
+See {File}.
 
 ## Class `FormData`
 
@@ -481,13 +508,16 @@ added:
   - v17.6.0
   - v16.15.0
 changes:
+  - version:
+    - v21.0.0
+    pr-url: https://github.com/nodejs/node/pull/45684
+    description: No longer experimental.
   - version: v18.0.0
     pr-url: https://github.com/nodejs/node/pull/41811
-    description: No longer behind `--experimental-global-fetch` CLI flag.
+    description: No longer behind `--experimental-fetch` CLI flag.
 -->
 
-> Stability: 1 - Experimental. Disable this API with the [`--no-experimental-fetch`][]
-> CLI flag.
+> Stability: 2 - Stable
 
 A browser-compatible implementation of {FormData}.
 
@@ -499,12 +529,16 @@ added: v0.1.27
 
 <!-- type=global -->
 
+> Stability: 3 - Legacy. Use [`globalThis`][] instead.
+
 * {Object} The global namespace object.
 
-In browsers, the top-level scope is the global scope. This means that
-within the browser `var something` will define a new global variable. In
-Node.js this is different. The top-level scope is not the global scope;
-`var something` inside a Node.js module will be local to that module.
+In browsers, the top-level scope has traditionally been the global scope. This
+means that `var something` will define a new global variable, except within
+ECMAScript modules. In Node.js, this is different. The top-level scope is not
+the global scope; `var something` inside a Node.js module will be local to that
+module, regardless of whether it is a [CommonJS module][] or an
+[ECMAScript module][].
 
 ## Class `Headers`
 
@@ -513,13 +547,16 @@ added:
   - v17.5.0
   - v16.15.0
 changes:
+  - version:
+    - v21.0.0
+    pr-url: https://github.com/nodejs/node/pull/45684
+    description: No longer experimental.
   - version: v18.0.0
     pr-url: https://github.com/nodejs/node/pull/41811
-    description: No longer behind `--experimental-global-fetch` CLI flag.
+    description: No longer behind `--experimental-fetch` CLI flag.
 -->
 
-> Stability: 1 - Experimental. Disable this API with the [`--no-experimental-fetch`][]
-> CLI flag.
+> Stability: 2 - Stable
 
 A browser-compatible implementation of {Headers}.
 
@@ -556,6 +593,114 @@ The `MessagePort` class. See [`MessagePort`][] for more details.
 ## `module`
 
 This variable may appear to be global but is not. See [`module`][].
+
+## `Navigator`
+
+<!-- YAML
+added: v21.0.0
+-->
+
+> Stability: 1.1 - Active development. Disable this API with the
+> [`--no-experimental-global-navigator`][] CLI flag.
+
+A partial implementation of the [Navigator API][].
+
+## `navigator`
+
+<!-- YAML
+added: v21.0.0
+-->
+
+> Stability: 1.1 - Active development. Disable this API with the
+> [`--no-experimental-global-navigator`][] CLI flag.
+
+A partial implementation of [`window.navigator`][].
+
+### `navigator.hardwareConcurrency`
+
+<!-- YAML
+added: v21.0.0
+-->
+
+* {number}
+
+The `navigator.hardwareConcurrency` read-only property returns the number of
+logical processors available to the current Node.js instance.
+
+```js
+console.log(`This process is running on ${navigator.hardwareConcurrency} logical processors`);
+```
+
+### `navigator.language`
+
+<!-- YAML
+added: v21.2.0
+-->
+
+* {string}
+
+The `navigator.language` read-only property returns a string representing the
+preferred language of the Node.js instance. The language will be determined by
+the ICU library used by Node.js at runtime based on the
+default language of the operating system.
+
+The value is representing the language version as defined in [RFC 5646][].
+
+The fallback value on builds without ICU is `'en-US'`.
+
+```js
+console.log(`The preferred language of the Node.js instance has the tag '${navigator.language}'`);
+```
+
+### `navigator.languages`
+
+<!-- YAML
+added: v21.2.0
+-->
+
+* {Array<string>}
+
+The `navigator.languages` read-only property returns an array of strings
+representing the preferred languages of the Node.js instance.
+By default `navigator.languages` contains only the value of
+`navigator.language`, which will be determined by the ICU library used by
+Node.js at runtime based on the default language of the operating system.
+
+The fallback value on builds without ICU is `['en-US']`.
+
+```js
+console.log(`The preferred languages are '${navigator.languages}'`);
+```
+
+### `navigator.platform`
+
+<!-- YAML
+added: v21.2.0
+-->
+
+* {string}
+
+The `navigator.platform` read-only property returns a string identifying the
+platform on which the Node.js instance is running.
+
+```js
+console.log(`This process is running on ${navigator.platform}`);
+```
+
+### `navigator.userAgent`
+
+<!-- YAML
+added: v21.1.0
+-->
+
+* {string}
+
+The `navigator.userAgent` read-only property returns user agent
+consisting of the runtime name and major version number.
+
+```js
+console.log(`The user-agent is ${navigator.userAgent}`); // Prints "Node.js/21"
+```
 
 ## `PerformanceEntry`
 
@@ -750,13 +895,16 @@ added:
   - v17.5.0
   - v16.15.0
 changes:
+  - version:
+    - v21.0.0
+    pr-url: https://github.com/nodejs/node/pull/45684
+    description: No longer experimental.
   - version: v18.0.0
     pr-url: https://github.com/nodejs/node/pull/41811
-    description: No longer behind `--experimental-global-fetch` CLI flag.
+    description: No longer behind `--experimental-fetch` CLI flag.
 -->
 
-> Stability: 1 - Experimental. Disable this API with the [`--no-experimental-fetch`][]
-> CLI flag.
+> Stability: 2 - Stable
 
 A browser-compatible implementation of {Response}.
 
@@ -767,13 +915,16 @@ added:
   - v17.5.0
   - v16.15.0
 changes:
+  - version:
+    - v21.0.0
+    pr-url: https://github.com/nodejs/node/pull/45684
+    description: No longer experimental.
   - version: v18.0.0
     pr-url: https://github.com/nodejs/node/pull/41811
-    description: No longer behind `--experimental-global-fetch` CLI flag.
+    description: No longer behind `--experimental-fetch` CLI flag.
 -->
 
-> Stability: 1 - Experimental. Disable this API with the [`--no-experimental-fetch`][]
-> CLI flag.
+> Stability: 2 - Stable
 
 A browser-compatible implementation of {Request}.
 
@@ -940,6 +1091,19 @@ The object that acts as the namespace for all W3C
 [WebAssembly][webassembly-org] related functionality. See the
 [Mozilla Developer Network][webassembly-mdn] for usage and compatibility.
 
+## `WebSocket`
+
+<!-- YAML
+added:
+  - v21.0.0
+  - v20.10.0
+-->
+
+> Stability: 1 - Experimental.
+
+A browser-compatible implementation of [`WebSocket`][]. Enable this API
+with the [`--experimental-websocket`][] CLI flag.
+
 ## Class: `WritableStream`
 
 <!-- YAML
@@ -970,9 +1134,14 @@ added: v18.0.0
 
 A browser-compatible implementation of [`WritableStreamDefaultWriter`][].
 
+[CommonJS module]: modules.md
+[ECMAScript module]: esm.md
+[Navigator API]: https://html.spec.whatwg.org/multipage/system-state.html#the-navigator-object
+[RFC 5646]: https://www.rfc-editor.org/rfc/rfc5646.txt
 [Web Crypto API]: webcrypto.md
-[`--no-experimental-fetch`]: cli.md#--no-experimental-fetch
+[`--experimental-websocket`]: cli.md#--experimental-websocket
 [`--no-experimental-global-customevent`]: cli.md#--no-experimental-global-customevent
+[`--no-experimental-global-navigator`]: cli.md#--no-experimental-global-navigator
 [`--no-experimental-global-webcrypto`]: cli.md#--no-experimental-global-webcrypto
 [`AbortController`]: https://developer.mozilla.org/en-US/docs/Web/API/AbortController
 [`ByteLengthQueuingStrategy`]: webstreams.md#class-bytelengthqueuingstrategy
@@ -1005,11 +1174,13 @@ A browser-compatible implementation of [`WritableStreamDefaultWriter`][].
 [`TransformStream`]: webstreams.md#class-transformstream
 [`URLSearchParams`]: url.md#class-urlsearchparams
 [`URL`]: url.md#class-url
+[`WebSocket`]: https://developer.mozilla.org/en-US/docs/Web/API/WebSocket
 [`WritableStreamDefaultController`]: webstreams.md#class-writablestreamdefaultcontroller
 [`WritableStreamDefaultWriter`]: webstreams.md#class-writablestreamdefaultwriter
 [`WritableStream`]: webstreams.md#class-writablestream
 [`__dirname`]: modules.md#__dirname
 [`__filename`]: modules.md#__filename
+[`abortSignal.reason`]: #abortsignalreason
 [`buffer.atob()`]: buffer.md#bufferatobdata
 [`buffer.btoa()`]: buffer.md#bufferbtoadata
 [`clearImmediate`]: timers.md#clearimmediateimmediate
@@ -1018,6 +1189,7 @@ A browser-compatible implementation of [`WritableStreamDefaultWriter`][].
 [`console`]: console.md
 [`exports`]: modules.md#exports
 [`fetch()`]: https://developer.mozilla.org/en-US/docs/Web/API/fetch
+[`globalThis`]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/globalThis
 [`module`]: modules.md#module
 [`perf_hooks.performance`]: perf_hooks.md#perf_hooksperformance
 [`process.nextTick()`]: process.md#processnexttickcallback-args
@@ -1027,6 +1199,7 @@ A browser-compatible implementation of [`WritableStreamDefaultWriter`][].
 [`setInterval`]: timers.md#setintervalcallback-delay-args
 [`setTimeout`]: timers.md#settimeoutcallback-delay-args
 [`structuredClone`]: https://developer.mozilla.org/en-US/docs/Web/API/structuredClone
+[`window.navigator`]: https://developer.mozilla.org/en-US/docs/Web/API/Window/navigator
 [buffer section]: buffer.md
 [built-in objects]: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects
 [module system documentation]: modules.md

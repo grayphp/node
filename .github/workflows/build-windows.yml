@@ -34,15 +34,15 @@ jobs:
     if: github.event.pull_request.draft == false
     strategy:
       matrix:
-        windows: [windows-2019]
+        windows: [windows-2022]
       fail-fast: false
     runs-on: ${{ matrix.windows }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
         with:
           persist-credentials: false
       - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c  # v5.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install deps

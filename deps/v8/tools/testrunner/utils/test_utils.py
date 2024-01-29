@@ -14,17 +14,19 @@ import unittest
 from contextlib import contextmanager
 from dataclasses import dataclass
 from io import StringIO
-from os.path import dirname as up
+from mock import patch
+from pathlib import Path
 
 from testrunner.local.command import BaseCommand
 from testrunner.objects import output
 from testrunner.local.context import DefaultOSContext
 from testrunner.local.pool import SingleThreadedExecutionPool
+from testrunner.local.variants import REQUIRED_BUILD_VARIABLES
 
-TOOLS_ROOT = up(up(up(os.path.abspath(__file__))))
-sys.path.append(TOOLS_ROOT)
+TOOLS_ROOT = Path(__file__).resolve().parent.parent.parent
 
-TEST_DATA_ROOT = os.path.join(TOOLS_ROOT, 'testrunner', 'testdata')
+TEST_DATA_ROOT = TOOLS_ROOT / 'testrunner' / 'testdata'
+BUILD_CONFIG_BASE = TEST_DATA_ROOT / 'v8_build_config.json'
 
 from testrunner.local import command
 from testrunner.local import pool
@@ -34,7 +36,7 @@ def temp_dir():
   """Wrapper making a temporary directory available."""
   path = None
   try:
-    path = tempfile.mkdtemp('v8_test_')
+    path = Path(tempfile.mkdtemp('_v8_test'))
     yield path
   finally:
     if path:
@@ -50,9 +52,9 @@ def temp_base(baseroot='testroot1'):
         copied to the temporary test root, to guarantee a fresh setup with no
         dirty state.
   """
-  basedir = os.path.join(TEST_DATA_ROOT, baseroot)
+  basedir = TEST_DATA_ROOT / baseroot
   with temp_dir() as tempbase:
-    if os.path.exists(basedir):
+    if basedir.exists():
       shutil.copytree(basedir, tempbase, dirs_exist_ok=True)
     yield tempbase
 
@@ -76,12 +78,14 @@ def capture():
 def with_json_output(basedir):
   """ Function used as a placeholder where we need to resolve the value in the
   context of a temporary test configuration"""
-  return os.path.join(basedir, 'out.json')
+  return basedir / 'out.json'
 
 def clean_json_output(json_path, basedir):
   # Extract relevant properties of the json output.
   if not json_path:
     return None
+  if not json_path.exists():
+    return '--file-does-not-exists--'
   with open(json_path) as f:
     json_output = json.load(f)
 
@@ -92,7 +96,7 @@ def clean_json_output(json_path, basedir):
     data['duration'] = 1
     data['command'] = ' '.join(
         ['/usr/bin/python'] + data['command'].split()[1:])
-    data['command'] = data['command'].replace(basedir + '/', '')
+    data['command'] = data['command'].replace(f'{basedir}/', '')
   for data in json_output['slowest_tests']:
     replace_variable_data(data)
   for data in json_output['results']:
@@ -106,11 +110,29 @@ def clean_json_output(json_path, basedir):
   json_output['slowest_tests'].sort(key=sort_key)
   return json_output
 
+def setup_build_config(basedir, outdir):
+  """Ensure a build config file exists - default or from test root."""
+  path = basedir / outdir / 'build' / 'v8_build_config.json'
+  if path.exists():
+    return
+
+  # Use default build-config blueprint.
+  with open(BUILD_CONFIG_BASE) as f:
+    config = json.load(f)
+
+  # Add defaults for all variables used in variant configs.
+  for key in REQUIRED_BUILD_VARIABLES:
+    config[key] = False
+
+  os.makedirs(path.parent, exist_ok=True)
+  with open(path, 'w') as f:
+    json.dump(config, f)
+
 def override_build_config(basedir, **kwargs):
   """Override the build config with new values provided as kwargs."""
   if not kwargs:
     return
-  path = os.path.join(basedir, 'out', 'build', 'v8_build_config.json')
+  path = basedir / 'out' / 'build' / 'v8_build_config.json'
   with open(path) as f:
     config = json.load(f)
     config.update(kwargs)
@@ -144,7 +166,7 @@ class TestResult():
     self.current_test_case.assertNotIn(content, self.stderr, self)
 
   def json_content_equals(self, expected_results_file):
-    with open(os.path.join(TEST_DATA_ROOT, expected_results_file)) as f:
+    with open(TEST_DATA_ROOT / expected_results_file) as f:
       expected_test_results = json.load(f)
 
     pretty_json = json.dumps(self.json, indent=2, sort_keys=True)
@@ -158,10 +180,14 @@ class TestRunnerTest(unittest.TestCase):
     command.setup_testing()
     pool.setup_testing()
 
-  def run_tests(self, *args, baseroot='testroot1', config_overrides={}, **kwargs):
+  def run_tests(
+      self, *args, baseroot='testroot1', config_overrides=None,
+      with_build_config=True, outdir='out', **kwargs):
     """Executes the test runner with captured output."""
     with temp_base(baseroot=baseroot) as basedir:
-      override_build_config(basedir, **config_overrides)
+      if with_build_config:
+        setup_build_config(basedir, outdir)
+      override_build_config(basedir, **(config_overrides or {}))
       json_out_path = None
       def resolve_arg(arg):
         """Some arguments come as function objects to be called (resolved)
@@ -194,6 +220,25 @@ class TestRunnerTest(unittest.TestCase):
     """Implement to return the runner class"""
     return None
 
+  @contextmanager
+  def with_fake_rdb(self):
+    records = []
+
+    def fake_sink():
+      return True
+
+    class Fake_RPC:
+
+      def __init__(self, sink):
+        pass
+
+      def send(self, r):
+        records.append(r)
+
+    with patch('testrunner.testproc.progress.rdb_sink', fake_sink), \
+        patch('testrunner.testproc.resultdb.ResultDB_RPC', Fake_RPC):
+      yield records
+
 
 class FakeOSContext(DefaultOSContext):
 
@@ -221,7 +266,7 @@ class FakeCommand(BaseCommand):
                timeout=60,
                env=None,
                verbose=False,
-               resources_func=None,
+               test_case=None,
                handle_sigterm=False):
     f_prefix = ['fake_wrapper'] + cmd_prefix
     super(FakeCommand, self).__init__(

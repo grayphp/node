@@ -30,7 +30,11 @@ namespace wasm {
 //   rec. group.
 class TypeCanonicalizer {
  public:
-  TypeCanonicalizer() = default;
+  static constexpr uint32_t kPredefinedArrayI8Index = 0;
+  static constexpr uint32_t kPredefinedArrayI16Index = 1;
+  static constexpr uint32_t kNumberOfPredefinedTypes = 2;
+
+  TypeCanonicalizer();
 
   // Singleton class; no copying or moving allowed.
   TypeCanonicalizer(const TypeCanonicalizer& other) = delete;
@@ -38,9 +42,13 @@ class TypeCanonicalizer {
   TypeCanonicalizer(TypeCanonicalizer&& other) = delete;
   TypeCanonicalizer& operator=(TypeCanonicalizer&& other) = delete;
 
-  // Registers the last {size} types of {module} as a recursive group, and
-  // possibly canonicalizes it if an identical one has been found.
-  // Modifies {module->isorecursive_canonical_type_ids}.
+  // Registers {size} types of {module} as a recursive group, starting at
+  // {start_index}, and possibly canonicalizes it if an identical one has been
+  // found. Modifies {module->isorecursive_canonical_type_ids}.
+  V8_EXPORT_PRIVATE void AddRecursiveGroup(WasmModule* module, uint32_t size,
+                                           uint32_t start_index);
+
+  // Same as above, except it registers the last {size} types in the module.
   V8_EXPORT_PRIVATE void AddRecursiveGroup(WasmModule* module, uint32_t size);
 
   // Adds a module-independent signature as a recursive group, and canonicalizes
@@ -48,12 +56,19 @@ class TypeCanonicalizer {
   // signature.
   V8_EXPORT_PRIVATE uint32_t AddRecursiveGroup(const FunctionSig* sig);
 
+  // Returns if {canonical_sub_index} is a canonical subtype of
+  // {canonical_super_index}.
+  V8_EXPORT_PRIVATE bool IsCanonicalSubtype(uint32_t canonical_sub_index,
+                                            uint32_t canonical_super_index);
+
   // Returns if the type at {sub_index} in {sub_module} is a subtype of the
   // type at {super_index} in {super_module} after canonicalization.
   V8_EXPORT_PRIVATE bool IsCanonicalSubtype(uint32_t sub_index,
                                             uint32_t super_index,
                                             const WasmModule* sub_module,
                                             const WasmModule* super_module);
+
+  size_t EstimateCurrentMemoryConsumption() const;
 
  private:
   using TypeInModule = std::pair<const WasmModule*, uint32_t>;
@@ -74,6 +89,8 @@ class TypeCanonicalizer {
     // TODO(manoskouk): Improve this.
     size_t hash_value() const {
       return base::hash_combine(base::hash_value(type_def.kind),
+                                base::hash_value(type_def.supertype),
+                                base::hash_value(type_def.is_final),
                                 base::hash_value(is_relative_supertype));
     }
   };
@@ -102,6 +119,8 @@ class TypeCanonicalizer {
 
     std::vector<CanonicalType> types;
   };
+
+  void AddPredefinedArrayType(uint32_t index, ValueType element_type);
 
   int FindCanonicalGroup(CanonicalGroup&) const;
 

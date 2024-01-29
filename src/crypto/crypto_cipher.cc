@@ -277,9 +277,7 @@ void CipherBase::Initialize(Environment* env, Local<Object> target) {
 
   Local<FunctionTemplate> t = NewFunctionTemplate(isolate, New);
 
-  t->InstanceTemplate()->SetInternalFieldCount(
-      CipherBase::kInternalFieldCount);
-  t->Inherit(BaseObject::GetConstructorTemplate(env));
+  t->InstanceTemplate()->SetInternalFieldCount(CipherBase::kInternalFieldCount);
 
   SetProtoMethod(isolate, t, "init", Init);
   SetProtoMethod(isolate, t, "initiv", InitIv);
@@ -406,15 +404,6 @@ void CipherBase::Init(const char* cipher_type,
                       unsigned int auth_tag_len) {
   HandleScope scope(env()->isolate());
   MarkPopErrorOnReturn mark_pop_error_on_return;
-#if OPENSSL_VERSION_MAJOR >= 3
-  if (EVP_default_properties_is_fips_enabled(nullptr)) {
-#else
-  if (FIPS_mode()) {
-#endif
-    return THROW_ERR_CRYPTO_UNSUPPORTED_OPERATION(env(),
-        "crypto.createCipher() is not supported in FIPS mode.");
-  }
-
   const EVP_CIPHER* const cipher = EVP_get_cipherbyname(cipher_type);
   if (cipher == nullptr)
     return THROW_ERR_CRYPTO_UNKNOWN_CIPHER(env());
@@ -900,6 +889,14 @@ bool CipherBase::Final(std::unique_ptr<BackingStore>* out) {
 
   if (kind_ == kDecipher && IsSupportedAuthenticatedMode(ctx_.get()))
     MaybePassAuthTagToOpenSSL();
+
+  // OpenSSL v1.x doesn't verify the presence of the auth tag so do
+  // it ourselves, see https://github.com/nodejs/node/issues/45874.
+  if (OPENSSL_VERSION_NUMBER < 0x30000000L && kind_ == kDecipher &&
+      NID_chacha20_poly1305 == EVP_CIPHER_CTX_nid(ctx_.get()) &&
+      auth_tag_state_ != kAuthTagPassedToOpenSSL) {
+    return false;
+  }
 
   // In CCM mode, final() only checks whether authentication failed in update().
   // EVP_CipherFinal_ex must not be called and will fail.

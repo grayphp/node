@@ -23,6 +23,7 @@ AllocationResult ConcurrentAllocator::AllocateRaw(int size_in_bytes,
                                                   AllocationOrigin origin) {
   size_in_bytes = ALIGN_TO_ALLOCATION_ALIGNMENT(size_in_bytes);
   DCHECK(!v8_flags.enable_third_party_heap);
+  DCHECK_EQ(origin == AllocationOrigin::kGC, context_ == Context::kGC);
   // TODO(dinfuehr): Add support for allocation observers
 #ifdef DEBUG
   if (local_heap_) local_heap_->VerifyCurrent();
@@ -51,7 +52,8 @@ AllocationResult ConcurrentAllocator::AllocateInLabFastUnaligned(
     return AllocationResult::Failure();
   }
 
-  HeapObject object = HeapObject::FromAddress(lab_.IncrementTop(size_in_bytes));
+  Tagged<HeapObject> object =
+      HeapObject::FromAddress(lab_.IncrementTop(size_in_bytes));
   return AllocationResult::FromObject(object);
 }
 
@@ -66,10 +68,11 @@ AllocationResult ConcurrentAllocator::AllocateInLabFastAligned(
     return AllocationResult::Failure();
   }
 
-  HeapObject object = HeapObject::FromAddress(lab_.IncrementTop(aligned_size));
+  Tagged<HeapObject> object =
+      HeapObject::FromAddress(lab_.IncrementTop(aligned_size));
 
   if (filler_size > 0) {
-    object = owning_heap()->PrecedeWithFiller(object, filler_size);
+    object = owning_heap()->PrecedeWithFillerBackground(object, filler_size);
   }
 
   return AllocationResult::FromObject(object);

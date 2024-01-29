@@ -27,7 +27,7 @@ bool isSpaceOrNewLine(UChar c) {
   return isASCII(c) && c <= ' ' && (c == ' ' || (c <= 0xD && c >= 0x9));
 }
 
-int64_t charactersToInteger(const UChar* characters, size_t length,
+int64_t charactersToInteger(const uint16_t* characters, size_t length,
                             bool* ok = nullptr) {
   std::vector<char> buffer;
   buffer.reserve(length + 1);
@@ -50,6 +50,8 @@ int64_t charactersToInteger(const UChar* characters, size_t length,
 
 String16::String16(const UChar* characters, size_t size)
     : m_impl(characters, size) {}
+String16::String16(const uint16_t* characters, size_t size)
+    : m_impl(reinterpret_cast<const UChar*>(characters), size) {}
 
 String16::String16(const UChar* characters) : m_impl(characters) {}
 
@@ -118,8 +120,8 @@ int String16::toInteger(bool* ok) const {
   return static_cast<int>(result);
 }
 
-String16 String16::stripWhiteSpace() const {
-  if (!length()) return String16();
+std::pair<size_t, size_t> String16::getTrimmedOffsetAndLength() const {
+  if (!length()) return std::make_pair(0, 0);
 
   size_t start = 0;
   size_t end = length() - 1;
@@ -128,13 +130,21 @@ String16 String16::stripWhiteSpace() const {
   while (start <= end && isSpaceOrNewLine(characters16()[start])) ++start;
 
   // only white space
-  if (start > end) return String16();
+  if (start > end) return std::make_pair(0, 0);
 
   // skip white space from end
   while (end && isSpaceOrNewLine(characters16()[end])) --end;
 
-  if (!start && end == length() - 1) return *this;
-  return String16(characters16() + start, end + 1 - start);
+  return std::make_pair(start, end + 1 - start);
+}
+
+String16 String16::stripWhiteSpace() const {
+  std::pair<size_t, size_t> offsetAndLength = getTrimmedOffsetAndLength();
+  if (offsetAndLength.second == 0) return String16();
+  if (offsetAndLength.first == 0 && offsetAndLength.second == length() - 1) {
+    return *this;
+  }
+  return substring(offsetAndLength.first, offsetAndLength.second);
 }
 
 String16Builder::String16Builder() = default;
@@ -231,6 +241,10 @@ String16 String16::fromUTF16LE(const UChar* stringStart, size_t length) {
   // No need to do anything on little endian machines.
   return String16(stringStart, length);
 #endif  // V8_TARGET_BIG_ENDIAN
+}
+
+String16 String16::fromUTF16LE(const uint16_t* stringStart, size_t length) {
+  return fromUTF16LE(reinterpret_cast<const UChar*>(stringStart), length);
 }
 
 std::string String16::utf8() const {

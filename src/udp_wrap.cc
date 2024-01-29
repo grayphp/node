@@ -21,10 +21,11 @@
 
 #include "udp_wrap.h"
 #include "env-inl.h"
+#include "handle_wrap.h"
 #include "node_buffer.h"
 #include "node_errors.h"
+#include "node_external_reference.h"
 #include "node_sockaddr-inl.h"
-#include "handle_wrap.h"
 #include "req_wrap-inl.h"
 #include "util-inl.h"
 
@@ -51,6 +52,25 @@ using v8::Signature;
 using v8::Uint32;
 using v8::Undefined;
 using v8::Value;
+
+namespace {
+template <int (*fn)(uv_udp_t*, int)>
+void SetLibuvInt32(const FunctionCallbackInfo<Value>& args) {
+  UDPWrap* wrap = Unwrap<UDPWrap>(args.Holder());
+  if (wrap == nullptr) {
+    args.GetReturnValue().Set(UV_EBADF);
+    return;
+  }
+  Environment* env = wrap->env();
+  CHECK_EQ(args.Length(), 1);
+  int flag;
+  if (!args[0]->Int32Value(env->context()).To(&flag)) {
+    return;
+  }
+  int err = fn(wrap->GetLibuvHandle(), flag);
+  args.GetReturnValue().Set(err);
+}
+}  // namespace
 
 class SendWrap : public ReqWrap<uv_udp_send_t> {
  public:
@@ -112,6 +132,12 @@ UDPWrapBase* UDPWrapBase::FromObject(Local<Object> obj) {
 void UDPWrapBase::AddMethods(Environment* env, Local<FunctionTemplate> t) {
   SetProtoMethod(env->isolate(), t, "recvStart", RecvStart);
   SetProtoMethod(env->isolate(), t, "recvStop", RecvStop);
+}
+
+void UDPWrapBase::RegisterExternalReferences(
+    ExternalReferenceRegistry* registry) {
+  registry->Register(RecvStart);
+  registry->Register(RecvStop);
 }
 
 UDPWrap::UDPWrap(Environment* env, Local<Object> object)
@@ -177,10 +203,15 @@ void UDPWrap::Initialize(Local<Object> target,
   SetProtoMethod(
       isolate, t, "dropSourceSpecificMembership", DropSourceSpecificMembership);
   SetProtoMethod(isolate, t, "setMulticastInterface", SetMulticastInterface);
-  SetProtoMethod(isolate, t, "setMulticastTTL", SetMulticastTTL);
-  SetProtoMethod(isolate, t, "setMulticastLoopback", SetMulticastLoopback);
-  SetProtoMethod(isolate, t, "setBroadcast", SetBroadcast);
-  SetProtoMethod(isolate, t, "setTTL", SetTTL);
+  SetProtoMethod(
+      isolate, t, "setMulticastTTL", SetLibuvInt32<uv_udp_set_multicast_ttl>);
+  SetProtoMethod(isolate,
+                 t,
+                 "setMulticastLoopback",
+                 SetLibuvInt32<uv_udp_set_multicast_loop>);
+  SetProtoMethod(
+      isolate, t, "setBroadcast", SetLibuvInt32<uv_udp_set_broadcast>);
+  SetProtoMethod(isolate, t, "setTTL", SetLibuvInt32<uv_udp_set_ttl>);
   SetProtoMethod(isolate, t, "bufferSize", BufferSize);
   SetProtoMethodNoSideEffect(isolate, t, "getSendQueueSize", GetSendQueueSize);
   SetProtoMethodNoSideEffect(
@@ -205,6 +236,34 @@ void UDPWrap::Initialize(Local<Object> target,
               constants).Check();
 }
 
+void UDPWrap::RegisterExternalReferences(ExternalReferenceRegistry* registry) {
+  UDPWrapBase::RegisterExternalReferences(registry);
+  registry->Register(New);
+  registry->Register(GetFD);
+
+  registry->Register(Open);
+  registry->Register(Bind);
+  registry->Register(Connect);
+  registry->Register(Send);
+  registry->Register(Bind6);
+  registry->Register(Connect6);
+  registry->Register(Send6);
+  registry->Register(Disconnect);
+  registry->Register(GetSockOrPeerName<UDPWrap, uv_udp_getpeername>);
+  registry->Register(GetSockOrPeerName<UDPWrap, uv_udp_getsockname>);
+  registry->Register(AddMembership);
+  registry->Register(DropMembership);
+  registry->Register(AddSourceSpecificMembership);
+  registry->Register(DropSourceSpecificMembership);
+  registry->Register(SetMulticastInterface);
+  registry->Register(SetLibuvInt32<uv_udp_set_multicast_ttl>);
+  registry->Register(SetLibuvInt32<uv_udp_set_multicast_loop>);
+  registry->Register(SetLibuvInt32<uv_udp_set_broadcast>);
+  registry->Register(SetLibuvInt32<uv_udp_set_ttl>);
+  registry->Register(BufferSize);
+  registry->Register(GetSendQueueSize);
+  registry->Register(GetSendQueueCount);
+}
 
 void UDPWrap::New(const FunctionCallbackInfo<Value>& args) {
   CHECK(args.IsConstructCall());
@@ -233,7 +292,7 @@ int sockaddr_for_family(int address_family,
     case AF_INET6:
       return uv_ip6_addr(address, port, reinterpret_cast<sockaddr_in6*>(addr));
     default:
-      CHECK(0 && "unexpected address family");
+      UNREACHABLE("unexpected address family");
   }
 }
 
@@ -372,30 +431,6 @@ void UDPWrap::Disconnect(const FunctionCallbackInfo<Value>& args) {
 
   args.GetReturnValue().Set(err);
 }
-
-#define X(name, fn)                                                            \
-  void UDPWrap::name(const FunctionCallbackInfo<Value>& args) {                \
-    UDPWrap* wrap = Unwrap<UDPWrap>(args.Holder());                            \
-    if (wrap == nullptr) {                                                     \
-      args.GetReturnValue().Set(UV_EBADF);                                     \
-      return;                                                                  \
-    }                                                                          \
-    Environment* env = wrap->env();                                            \
-    CHECK_EQ(args.Length(), 1);                                                \
-    int flag;                                                                  \
-    if (!args[0]->Int32Value(env->context()).To(&flag)) {                      \
-      return;                                                                  \
-    }                                                                          \
-    int err = fn(&wrap->handle_, flag);                                        \
-    args.GetReturnValue().Set(err);                                            \
-  }
-
-X(SetTTL, uv_udp_set_ttl)
-X(SetBroadcast, uv_udp_set_broadcast)
-X(SetMulticastTTL, uv_udp_set_multicast_ttl)
-X(SetMulticastLoopback, uv_udp_set_multicast_loop)
-
-#undef X
 
 void UDPWrap::SetMulticastInterface(const FunctionCallbackInfo<Value>& args) {
   UDPWrap* wrap;
@@ -807,3 +842,5 @@ void UDPWrap::GetSendQueueCount(const FunctionCallbackInfo<Value>& args) {
 }  // namespace node
 
 NODE_BINDING_CONTEXT_AWARE_INTERNAL(udp_wrap, node::UDPWrap::Initialize)
+NODE_BINDING_EXTERNAL_REFERENCE(udp_wrap,
+                                node::UDPWrap::RegisterExternalReferences)

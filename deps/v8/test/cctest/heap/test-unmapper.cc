@@ -45,13 +45,14 @@ UNINITIALIZED_TEST(EagerUnmappingInCollectAllAvailableGarbage) {
   v8::Isolate* isolate = v8::Isolate::New(create_params);
 
   {
+    v8::Isolate::Scope isolate_scope(isolate);
     v8::HandleScope handle_scope(isolate);
     v8::Local<v8::Context> context = CcTest::NewContext(isolate);
     v8::Context::Scope context_scope(context);
     Isolate* i_isolate = reinterpret_cast<i::Isolate*>(isolate);
     Heap* heap = i_isolate->heap();
     i::heap::SimulateFullSpace(heap->old_space());
-    CcTest::CollectAllAvailableGarbage(i_isolate);
+    i::heap::InvokeMemoryReducingMajorGCs(heap);
     CHECK_EQ(0, heap->memory_allocator()->unmapper()->NumberOfChunks());
   }
   isolate->Dispose();

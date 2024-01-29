@@ -151,7 +151,8 @@ TEST_F(BytecodeArrayBuilderTest, AllBytecodesGenerated) {
       .SetKeyedProperty(reg, reg, strict_keyed_store_slot.ToInt(),
                         LanguageMode::kStrict)
       .DefineNamedOwnProperty(reg, name, define_named_own_slot.ToInt())
-      .DefineKeyedOwnProperty(reg, reg, define_named_own_slot.ToInt())
+      .DefineKeyedOwnProperty(reg, reg, DefineKeyedOwnPropertyFlag::kNoFlags,
+                              define_named_own_slot.ToInt())
       .StoreInArrayLiteral(reg, reg, store_array_element_slot.ToInt());
 
   // Emit Iterator-protocol operations
@@ -273,7 +274,8 @@ TEST_F(BytecodeArrayBuilderTest, AllBytecodesGenerated) {
       .CompareNull();
 
   // Emit conversion operator invocations.
-  builder.ToNumber(1).ToNumeric(1).ToObject(reg).ToName(reg).ToString();
+  builder.ToNumber(1).ToNumeric(1).ToObject(reg).ToName().ToString().ToBoolean(
+      ToBooleanMode::kConvertToBoolean);
 
   // Emit GetSuperConstructor.
   builder.GetSuperConstructor(reg);
@@ -516,7 +518,7 @@ TEST_F(BytecodeArrayBuilderTest, FrameSizesLookGood) {
         builder.StoreAccumulatorInRegister(temp);
         // Ensure temporaries are used so not optimized away by the
         // register optimizer.
-        builder.ToName(temp);
+        builder.ToName().StoreAccumulatorInRegister(temp);
       }
       builder.Return();
 
@@ -571,7 +573,7 @@ TEST_F(BytecodeArrayBuilderTest, Constants) {
   ast_factory.Internalize(isolate());
   Handle<BytecodeArray> array = builder.ToBytecodeArray(isolate());
   // Should only have one entry for each identical constant.
-  EXPECT_EQ(4, array->constant_pool().length());
+  EXPECT_EQ(4, array->constant_pool()->length());
 }
 
 TEST_F(BytecodeArrayBuilderTest, ForwardJumps) {

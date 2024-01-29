@@ -43,7 +43,6 @@ let instance = (() => {
       kExprBlock, kWasmVoid,
         kExprLocalGet, 0,
         kExprBrOnNull, 0,
-        kGCPrefix, kExprRefAsStruct,
         kGCPrefix, kExprRefCast, struct,
         kGCPrefix, kExprStructGet, struct, 0, // value
         kExprI32Const, 0, // isNull
@@ -64,7 +63,6 @@ let instance = (() => {
         kExprLocalGet, 0,
         kGCPrefix, kExprExternInternalize,
         kExprBrOnNull, 0,
-        kGCPrefix, kExprRefAsStruct,
         kGCPrefix, kExprRefCast, struct,
         kGCPrefix, kExprStructGet, struct, 0, // value
         kExprI32Const, 0, // isNull
@@ -79,14 +77,14 @@ let instance = (() => {
     builder.addFunction('i31_producer', makeSig([kWasmI32], [kWasmEqRef]))
     .addBody([
       kExprLocalGet, 0,
-      kGCPrefix, kExprI31New])
+      kGCPrefix, kExprRefI31])
     .exportFunc();
 
     builder.addFunction('i31_externalize',
                         makeSig([kWasmI32], [kWasmExternRef]))
     .addBody([
       kExprLocalGet, 0,
-      kGCPrefix, kExprI31New,
+      kGCPrefix, kExprRefI31,
       kGCPrefix, kExprExternExternalize,
     ])
     .exportFunc();
@@ -99,7 +97,7 @@ let instance = (() => {
       kExprBlock, kWasmVoid,
         kExprLocalGet, 0,
         kExprBrOnNull, 0,
-        kGCPrefix, kExprRefAsI31,
+        kGCPrefix, kExprRefCast, kI31RefCode,
         kGCPrefix, kExprI31GetS, // value
         kExprI32Const, 0, // isNull
         kExprReturn,
@@ -119,7 +117,7 @@ let instance = (() => {
         kExprLocalGet, 0,
         kGCPrefix, kExprExternInternalize,
         kExprBrOnNull, 0,
-        kGCPrefix, kExprRefAsI31,
+        kGCPrefix, kExprRefCast, kI31RefCode,
         kGCPrefix, kExprI31GetS, // value
         kExprI32Const, 0, // isNull
         kExprReturn,
@@ -155,7 +153,6 @@ let instance = (() => {
       kExprBlock, kWasmVoid,
         kExprLocalGet, 0,
         kExprBrOnNull, 0,
-        kGCPrefix, kExprRefAsArray,
         kGCPrefix, kExprRefCast, array,
         kExprI32Const, 0,
         kGCPrefix, kExprArrayGet, array, // value
@@ -177,7 +174,6 @@ let instance = (() => {
         kExprLocalGet, 0,
         kGCPrefix, kExprExternInternalize,
         kExprBrOnNull, 0,
-        kGCPrefix, kExprRefAsArray,
         kGCPrefix, kExprRefCast, array,
         kExprI32Const, 0,
         kGCPrefix, kExprArrayGet, array, // value
@@ -221,6 +217,7 @@ for (let type of ["struct", "i31", "array"]) {
 
 // Differently to structs and arrays, the i31 value is directly accessible in
 // JavaScript. Similarly, a JS smi can be internalized as an i31ref.
-// TODO(7748): Fix i31 interop with disabled pointer compression.
-// assertEquals(12345, instance.exports.i31_externalize(12345));
-// assertEquals([12345, 0], instance.exports.i31_internalize(12345));
+let createHeapNumber = (x) => x + x;
+assertEquals(12345, instance.exports.i31_externalize(12345));
+assertEquals([12345, 0], instance.exports.i31_internalize(12345));
+assertEquals([11, 0], instance.exports.i31_internalize(createHeapNumber(5.5)));

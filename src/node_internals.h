@@ -79,10 +79,25 @@ void GetSockOrPeerName(const v8::FunctionCallbackInfo<v8::Value>& args) {
   args.GetReturnValue().Set(err);
 }
 
-void PrintStackTrace(v8::Isolate* isolate, v8::Local<v8::StackTrace> stack);
+constexpr int kMaxFrameCountForLogging = 10;
+v8::MaybeLocal<v8::StackTrace> GetCurrentStackTrace(
+    v8::Isolate* isolate, int frame_count = kMaxFrameCountForLogging);
+
+enum class StackTracePrefix {
+  kAt,  // "    at "
+  kNumber
+};
+void PrintCurrentStackTrace(v8::Isolate* isolate,
+                            StackTracePrefix prefix = StackTracePrefix::kAt);
+void PrintStackTrace(v8::Isolate* isolate,
+                     v8::Local<v8::StackTrace> stack,
+                     StackTracePrefix prefix = StackTracePrefix::kAt);
 void PrintCaughtException(v8::Isolate* isolate,
                           v8::Local<v8::Context> context,
                           const v8::TryCatch& try_catch);
+std::string FormatCaughtException(v8::Isolate* isolate,
+                                  v8::Local<v8::Context> context,
+                                  const v8::TryCatch& try_catch);
 
 void ResetStdio();  // Safe to call more than once and from signal handlers.
 #ifdef __POSIX__
@@ -177,16 +192,13 @@ static v8::MaybeLocal<v8::Object> New(Environment* env,
   char* src = reinterpret_cast<char*>(buf->out());
   const size_t len_in_bytes = buf->length() * sizeof(buf->out()[0]);
 
-  if (buf->IsAllocated())
+  if (buf->IsAllocated()) {
     ret = New(env, src, len_in_bytes);
-  else if (!buf->IsInvalidated())
-    ret = Copy(env, src, len_in_bytes);
-
-  if (ret.IsEmpty())
-    return ret;
-
-  if (buf->IsAllocated())
+    // new always takes ownership of src
     buf->Release();
+  } else if (!buf->IsInvalidated()) {
+    ret = Copy(env, src, len_in_bytes);
+  }
 
   return ret;
 }
@@ -303,7 +315,9 @@ bool SafeGetenv(const char* key,
 void DefineZlibConstants(v8::Local<v8::Object> target);
 v8::Isolate* NewIsolate(v8::Isolate::CreateParams* params,
                         uv_loop_t* event_loop,
-                        MultiIsolatePlatform* platform);
+                        MultiIsolatePlatform* platform,
+                        const SnapshotData* snapshot_data = nullptr,
+                        const IsolateSettings& settings = {});
 // This overload automatically picks the right 'main_script_id' if no callback
 // was provided by the embedder.
 v8::MaybeLocal<v8::Value> StartExecution(Environment* env,
@@ -313,7 +327,7 @@ void MarkBootstrapComplete(const v8::FunctionCallbackInfo<v8::Value>& args);
 
 class InitializationResultImpl final : public InitializationResult {
  public:
-  ~InitializationResultImpl();
+  ~InitializationResultImpl() = default;
   int exit_code() const { return static_cast<int>(exit_code_enum()); }
   ExitCode exit_code_enum() const { return exit_code_; }
   bool early_return() const { return early_return_; }
@@ -403,6 +417,7 @@ std::string Basename(const std::string& str, const std::string& extension);
 
 node_module napi_module_to_node_module(const napi_module* mod);
 
+std::ostream& operator<<(std::ostream& output, const SnapshotFlags& flags);
 std::ostream& operator<<(std::ostream& output,
                          const std::vector<SnapshotIndex>& v);
 std::ostream& operator<<(std::ostream& output,

@@ -71,11 +71,11 @@ class V8_EXPORT_PRIVATE GlobalHandles final {
   ~GlobalHandles();
 
   // Creates a new global handle that is alive until Destroy is called.
-  Handle<Object> Create(Object value);
+  Handle<Object> Create(Tagged<Object> value);
   Handle<Object> Create(Address value);
 
   template <typename T>
-  inline Handle<T> Create(T value);
+  inline Handle<T> Create(Tagged<T> value);
 
   void RecordStats(HeapStats* stats);
 
@@ -83,8 +83,7 @@ class V8_EXPORT_PRIVATE GlobalHandles final {
   void InvokeSecondPassPhantomCallbacks();
 
   // Schedule or invoke second pass weak callbacks.
-  void PostGarbageCollectionProcessing(
-      GarbageCollector collector, const v8::GCCallbackFlags gc_callback_flags);
+  void PostGarbageCollectionProcessing(v8::GCCallbackFlags gc_callback_flags);
 
   void IterateStrongRoots(RootVisitor* v);
   void IterateWeakRoots(RootVisitor* v);
@@ -104,9 +103,9 @@ class V8_EXPORT_PRIVATE GlobalHandles final {
   // Iterates over strong and dependent handles. See the note above.
   void IterateYoungStrongAndDependentRoots(RootVisitor* v);
 
-  // Processes all young weak objects. Weak objects for which
-  // `should_reset_handle()` returns true are reset and others are passed to the
-  // visitor `v`.
+  // Processes all young weak objects:
+  // - Weak objects for which `should_reset_handle()` returns true are reset;
+  // - Others are passed to `v` iff `v` is not null.
   void ProcessWeakYoungObjects(RootVisitor* v,
                                WeakSlotCallbackWithHeap should_reset_handle);
 
@@ -122,6 +121,7 @@ class V8_EXPORT_PRIVATE GlobalHandles final {
   size_t UsedSize() const;
   // Number of global handles.
   size_t handles_count() const;
+  size_t last_gc_custom_callbacks() const { return last_gc_custom_callbacks_; }
 
   void IterateAllRootsForTesting(v8::PersistentHandleVisitor* v);
 
@@ -129,6 +129,8 @@ class V8_EXPORT_PRIVATE GlobalHandles final {
   void PrintStats();
   void Print();
 #endif  // DEBUG
+
+  bool HasYoung() const { return !young_nodes_.empty(); }
 
  private:
   // Internal node structures.
@@ -138,10 +140,6 @@ class V8_EXPORT_PRIVATE GlobalHandles final {
   template <class NodeType>
   class NodeSpace;
   class PendingPhantomCallback;
-
-  template <typename T>
-  size_t InvokeFirstPassWeakCallbacks(
-      std::vector<std::pair<T*, PendingPhantomCallback>>* pending);
 
   void ApplyPersistentHandleVisitor(v8::PersistentHandleVisitor* visitor,
                                     Node* node);
@@ -160,9 +158,10 @@ class V8_EXPORT_PRIVATE GlobalHandles final {
   // is accessed, some of the objects may have been promoted already.
   std::vector<Node*> young_nodes_;
   std::vector<std::pair<Node*, PendingPhantomCallback>>
-      regular_pending_phantom_callbacks_;
+      pending_phantom_callbacks_;
   std::vector<PendingPhantomCallback> second_pass_callbacks_;
   bool second_pass_callbacks_task_posted_ = false;
+  size_t last_gc_custom_callbacks_ = 0;
 };
 
 class GlobalHandles::PendingPhantomCallback final {
@@ -198,7 +197,8 @@ class EternalHandles final {
   EternalHandles& operator=(const EternalHandles&) = delete;
 
   // Create an EternalHandle, overwriting the index.
-  V8_EXPORT_PRIVATE void Create(Isolate* isolate, Object object, int* index);
+  V8_EXPORT_PRIVATE void Create(Isolate* isolate, Tagged<Object> object,
+                                int* index);
 
   // Grab the handle for an existing EternalHandle.
   inline Handle<Object> Get(int index) {
@@ -248,24 +248,28 @@ class GlobalHandleVector {
       return *this;
     }
     Handle<T> operator*() { return Handle<T>(&*it_); }
-    bool operator!=(Iterator& that) { return it_ != that.it_; }
+    bool operator==(const Iterator& that) const { return it_ == that.it_; }
+    bool operator!=(const Iterator& that) const { return it_ != that.it_; }
+
+    Tagged<T> raw() { return T::cast(Tagged<Object>(*it_)); }
 
    private:
     std::vector<Address, StrongRootBlockAllocator>::iterator it_;
   };
 
-  explicit GlobalHandleVector(Heap* heap)
-      : locations_(StrongRootBlockAllocator(heap)) {}
+  explicit inline GlobalHandleVector(Heap* heap);
+  // Usage with LocalHeap is safe.
+  explicit inline GlobalHandleVector(LocalHeap* local_heap);
 
   Handle<T> operator[](size_t i) { return Handle<T>(&locations_[i]); }
 
   size_t size() const { return locations_.size(); }
   bool empty() const { return locations_.empty(); }
 
-  void Push(T val) { locations_.push_back(val.ptr()); }
+  void Push(Tagged<T> val) { locations_.push_back(val.ptr()); }
   // Handles into the GlobalHandleVector become invalid when they are removed,
   // so "pop" returns a raw object rather than a handle.
-  inline T Pop();
+  inline Tagged<T> Pop();
 
   Iterator begin() { return Iterator(locations_.begin()); }
   Iterator end() { return Iterator(locations_.end()); }

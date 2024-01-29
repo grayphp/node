@@ -20,6 +20,23 @@ constexpr auto CallInterfaceDescriptor::DefaultRegisterArray() {
   return registers;
 }
 
+constexpr auto CallInterfaceDescriptor::DefaultDoubleRegisterArray() {
+  auto registers = DoubleRegisterArray(d0, d1, d2, d3, d4, d5, d6);
+  return registers;
+}
+
+constexpr auto CallInterfaceDescriptor::DefaultReturnRegisterArray() {
+  auto registers =
+      RegisterArray(kReturnRegister0, kReturnRegister1, kReturnRegister2);
+  return registers;
+}
+
+constexpr auto CallInterfaceDescriptor::DefaultReturnDoubleRegisterArray() {
+  // Padding to have as many double return registers as GP return registers.
+  auto registers = DoubleRegisterArray(kFPReturnRegister0, no_dreg, no_dreg);
+  return registers;
+}
+
 #if DEBUG
 template <typename DerivedDescriptor>
 void StaticCallInterfaceDescriptor<DerivedDescriptor>::
@@ -101,6 +118,9 @@ constexpr Register StoreDescriptor::SlotRegister() { return x4; }
 constexpr Register StoreWithVectorDescriptor::VectorRegister() { return x3; }
 
 // static
+constexpr Register DefineKeyedOwnDescriptor::FlagsRegister() { return x5; }
+
+// static
 constexpr Register StoreTransitionDescriptor::MapRegister() { return x5; }
 
 // static
@@ -123,6 +143,17 @@ constexpr Register BaselineLeaveFrameDescriptor::WeightRegister() { return x4; }
 // static
 // static
 constexpr Register TypeConversionDescriptor::ArgumentRegister() { return x0; }
+
+// static
+constexpr Register
+MaglevOptimizeCodeOrTailCallOptimizedCodeSlotDescriptor::FlagsRegister() {
+  return x8;
+}
+// static
+constexpr Register MaglevOptimizeCodeOrTailCallOptimizedCodeSlotDescriptor::
+    FeedbackVectorRegister() {
+  return x9;
+}
 
 // static
 constexpr auto TypeofDescriptor::registers() { return RegisterArray(x0); }
@@ -273,11 +304,36 @@ constexpr auto BinarySmiOp_BaselineDescriptor::registers() {
 }
 
 // static
-constexpr auto ApiCallbackDescriptor::registers() {
-  return RegisterArray(x1,   // kApiFunctionAddress
-                       x2,   // kArgc
-                       x3,   // kCallData
-                       x0);  // kHolder
+constexpr Register
+CallApiCallbackOptimizedDescriptor::ApiFunctionAddressRegister() {
+  return x1;
+}
+// static
+constexpr Register
+CallApiCallbackOptimizedDescriptor::ActualArgumentsCountRegister() {
+  return x2;
+}
+// static
+constexpr Register CallApiCallbackOptimizedDescriptor::CallDataRegister() {
+  return x3;
+}
+// static
+constexpr Register CallApiCallbackOptimizedDescriptor::HolderRegister() {
+  return x0;
+}
+
+// static
+constexpr Register
+CallApiCallbackGenericDescriptor::ActualArgumentsCountRegister() {
+  return x2;
+}
+// static
+constexpr Register CallApiCallbackGenericDescriptor::CallHandlerInfoRegister() {
+  return x3;
+}
+// static
+constexpr Register CallApiCallbackGenericDescriptor::HolderRegister() {
+  return x0;
 }
 
 // static
@@ -313,6 +369,11 @@ constexpr auto ResumeGeneratorDescriptor::registers() {
 // static
 constexpr auto RunMicrotasksEntryDescriptor::registers() {
   return RegisterArray(x0, x1);
+}
+
+constexpr auto WasmJSToWasmWrapperDescriptor::registers() {
+  // Arbitrarily picked register.
+  return RegisterArray(x8);
 }
 
 }  // namespace internal

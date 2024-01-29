@@ -5,6 +5,7 @@
 #include "src/execution/thread-local-top.h"
 #include "src/execution/isolate.h"
 #include "src/execution/simulator.h"
+#include "src/base/sanitizer/msan.h"
 
 #if V8_ENABLE_WEBASSEMBLY
 #include "src/trap-handler/trap-handler.h"
@@ -24,7 +25,7 @@ void ThreadLocalTop::Clear() {
   pending_handler_sp_ = kNullAddress;
   num_frames_above_pending_handler_ = 0;
   last_api_entry_ = kNullAddress;
-  pending_message_ = Object();
+  pending_message_ = Tagged<Object>();
   rethrowing_message_ = false;
   external_caught_exception_ = false;
   c_entry_fp_ = kNullAddress;
@@ -37,17 +38,21 @@ void ThreadLocalTop::Clear() {
   current_embedder_state_ = nullptr;
   failed_access_check_callback_ = nullptr;
   thread_in_wasm_flag_address_ = kNullAddress;
-  stack_ = ::heap::base::Stack();
+  is_on_central_stack_flag_ = true;
+  central_stack_sp_ = kNullAddress;
+  central_stack_limit_ = kNullAddress;
+  secondary_stack_sp_ = kNullAddress;
+  secondary_stack_limit_ = kNullAddress;
 }
 
 void ThreadLocalTop::Initialize(Isolate* isolate) {
   Clear();
   isolate_ = isolate;
   thread_id_ = ThreadId::Current();
-  stack_.SetStackStart(base::Stack::GetStackStart());
 #if V8_ENABLE_WEBASSEMBLY
   thread_in_wasm_flag_address_ = reinterpret_cast<Address>(
       trap_handler::GetThreadInWasmThreadLocalAddress());
+  is_on_central_stack_flag_ = true;
 #endif  // V8_ENABLE_WEBASSEMBLY
 #ifdef USE_SIMULATOR
   simulator_ = Simulator::current(isolate);

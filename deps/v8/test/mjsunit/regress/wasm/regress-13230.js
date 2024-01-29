@@ -8,7 +8,7 @@ d8.file.execute("test/mjsunit/wasm/wasm-module-builder.js");
 
 let builder = new WasmModuleBuilder();
 
-builder.addMemory(1, 2, false, false);
+builder.addMemory(1, 2);
 
 let callee = builder.addFunction('callee', kSig_v_v).addBody([kExprNop]);
 
@@ -26,5 +26,5 @@ let instance = builder.instantiate();
 let main = instance.exports.main;
 
 for (let i = 0; i < 20; i++) main();
-%WasmTierUpFunction(instance, main_func.index);
+%WasmTierUpFunction(main);
 main();

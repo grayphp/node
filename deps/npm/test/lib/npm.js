@@ -1,38 +1,9 @@
 const t = require('tap')
 const { resolve, dirname, join } = require('path')
 const fs = require('fs')
-
 const { load: loadMockNpm } = require('../fixtures/mock-npm.js')
-const mockGlobals = require('../fixtures/mock-globals')
+const mockGlobals = require('@npmcli/mock-globals')
 const { commands } = require('../../lib/utils/cmd-list.js')
-
-// delete this so that we don't have configs from the fact that it
-// is being run by 'npm test'
-const event = process.env.npm_lifecycle_event
-
-for (const env of Object.keys(process.env).filter(e => /^npm_/.test(e))) {
-  if (env === 'npm_command') {
-    // should only be running this in the 'test' or 'run-script' command!
-    // if the lifecycle event is 'test', then it'll be either 'test' or 'run',
-    // otherwise it should always be run-script. Of course, it'll be missing
-    // if this test is just run directly, which is also acceptable.
-    if (event === 'test') {
-      t.ok(
-        ['test', 'run-script'].some(i => i === process.env[env]),
-        'should match "npm test" or "npm run test"'
-      )
-    } else {
-      t.match(process.env[env], /^(run-script|exec)$/)
-    }
-  }
-  delete process.env[env]
-}
-
-t.afterEach(async (t) => {
-  for (const env of Object.keys(process.env).filter(e => /^npm_/.test(e))) {
-    delete process.env[env]
-  }
-})
 
 t.test('not yet loaded', async t => {
   const { npm, logs } = await loadMockNpm(t, { load: false })
@@ -134,10 +105,6 @@ t.test('npm.load', async t => {
     mockGlobals(t, { process: { platform: 'win32' } })
     t.equal(npm.bin, npm.globalBin, 'bin is global bin in windows mode')
     t.equal(npm.dir, npm.globalDir, 'dir is global dir in windows mode')
-
-    const tmp = npm.tmp
-    t.match(tmp, String, 'npm.tmp is a string')
-    t.equal(tmp, npm.tmp, 'getter only generates it once')
   })
 
   await t.test('forceful loading', async t => {
@@ -156,12 +123,12 @@ t.test('npm.load', async t => {
 
   await t.test('node is a symlink', async t => {
     const node = process.platform === 'win32' ? 'node.exe' : 'node'
-    const { npm, logs, outputs, prefix } = await loadMockNpm(t, {
+    const { Npm, npm, logs, outputs, prefix } = await loadMockNpm(t, {
       prefixDir: {
         bin: t.fixture('symlink', dirname(process.execPath)),
       },
-      globals: ({ prefix }) => ({
-        'process.env.PATH': resolve(prefix, 'bin'),
+      globals: (dirs) => ({
+        'process.env.PATH': resolve(dirs.prefix, 'bin'),
         'process.argv': [
           node,
           process.argv[1],
@@ -197,8 +164,8 @@ t.test('npm.load', async t => {
     t.equal(npm.command, 'll', 'command set to first npm command')
     t.equal(npm.flatOptions.npmCommand, 'll', 'npmCommand flatOption set')
 
-    const ll = await npm.cmd('ll')
-    t.same(outputs, [[ll.usage]], 'print usage')
+    const ll = Npm.cmd('ll')
+    t.same(outputs, [[ll.describeUsage]], 'print usage')
     npm.config.set('usage', false)
 
     outputs.length = 0
@@ -231,7 +198,6 @@ t.test('npm.load', async t => {
 
   await t.test('--no-workspaces with --workspace', async t => {
     const { npm } = await loadMockNpm(t, {
-      load: false,
       prefixDir: {
         packages: {
           a: {
@@ -299,9 +265,6 @@ t.test('npm.load', async t => {
       },
     })
 
-    // verify that calling the command with a short name still sets
-    // the npm.command property to the full canonical name of the cmd.
-    npm.command = null
     await npm.exec('run', [])
 
     t.equal(npm.command, 'run-script', 'npm.command set to canonical name')
@@ -357,9 +320,7 @@ t.test('npm.load', async t => {
         ],
       },
     })
-    // verify that calling the command with a short name still sets
-    // the npm.command property to the full canonical name of the cmd.
-    npm.command = null
+
     await t.rejects(
       npm.exec('run', []),
       /Workspaces not supported for global packages/
@@ -427,23 +388,26 @@ t.test('debug log', async t => {
 
     const log1 = ['silly', 'test', 'before load']
     const log2 = ['silly', 'test', 'after load']
+    const log3 = ['silly', 'test', 'hello\x00world']
 
     process.emit('log', ...log1)
     await npm.load()
     process.emit('log', ...log2)
+    process.emit('log', ...log3)
 
     const debug = await debugFile()
     t.equal(npm.logFiles.length, 1, 'one debug file')
     t.match(debug, log1.join(' '), 'before load appears')
     t.match(debug, log2.join(' '), 'after load log appears')
+    t.match(debug, 'hello^@world')
   })
 
   t.test('can load with bad dir', async t => {
     const { npm, testdir } = await loadMockNpm(t, {
       load: false,
-      config: {
-        'logs-dir': (c) => join(c.testdir, 'my_logs_dir'),
-      },
+      config: (dirs) => ({
+        'logs-dir': join(dirs.testdir, 'my_logs_dir'),
+      }),
     })
     const logsDir = join(testdir, 'my_logs_dir')
 
@@ -556,7 +520,7 @@ t.test('timings', async t => {
   }
 })
 
-t.test('output clears progress and console.logs the message', async t => {
+t.test('output clears progress and console.logs cleaned messages', async t => {
   t.plan(4)
   let showingProgress = true
   const logs = []
@@ -580,21 +544,22 @@ t.test('output clears progress and console.logs the message', async t => {
       },
     },
   })
-  npm.originalOutput('hello')
-  npm.originalOutputError('error')
+  npm.originalOutput('hello\x00world')
+  npm.originalOutputError('error\x00world')
 
-  t.match(logs, [['hello']])
-  t.match(errors, [['error']])
+  t.match(logs, [['hello^@world']])
+  t.match(errors, [['error^@world']])
 })
 
 t.test('aliases and typos', async t => {
-  const { npm } = await loadMockNpm(t, { load: false })
-  await t.rejects(npm.cmd('thisisnotacommand'), { code: 'EUNKNOWNCOMMAND' })
-  await t.rejects(npm.cmd(''), { code: 'EUNKNOWNCOMMAND' })
-  await t.rejects(npm.cmd('birthday'), { code: 'EUNKNOWNCOMMAND' })
-  await t.resolves(npm.cmd('it'), { name: 'install-test' })
-  await t.resolves(npm.cmd('installTe'), { name: 'install-test' })
-  await t.resolves(npm.cmd('access'), { name: 'access' })
+  const { Npm } = await loadMockNpm(t, { init: false })
+  t.throws(() => Npm.cmd('thisisnotacommand'), { code: 'EUNKNOWNCOMMAND' })
+  t.throws(() => Npm.cmd(''), { code: 'EUNKNOWNCOMMAND' })
+  t.throws(() => Npm.cmd('birthday'), { code: 'EUNKNOWNCOMMAND' })
+  t.match(Npm.cmd('it').name, 'install-test')
+  t.match(Npm.cmd('installTe').name, 'install-test')
+  t.match(Npm.cmd('access').name, 'access')
+  t.match(Npm.cmd('auth').name, 'owner')
 })
 
 t.test('explicit workspace rejection', async t => {
@@ -648,15 +613,15 @@ t.test('implicit workspace rejection', async t => {
         workspaces: ['./packages/a'],
       }),
     },
-    globals: ({ prefix }) => ({
-      'process.cwd': () => join(prefix, 'packages', 'a'),
+    chdir: ({ prefix }) => join(prefix, 'packages', 'a'),
+    globals: {
       'process.argv': [
         process.execPath,
         process.argv[1],
         '--color', 'false',
         '--workspace', './packages/a',
       ],
-    }),
+    },
   })
   await t.rejects(
     mock.npm.exec('team', []),
@@ -682,44 +647,42 @@ t.test('implicit workspace accept', async t => {
         workspaces: ['./packages/a'],
       }),
     },
-    globals: ({ prefix }) => ({
-      'process.cwd': () => join(prefix, 'packages', 'a'),
+    chdir: ({ prefix }) => join(prefix, 'packages', 'a'),
+    globals: {
       'process.argv': [
         process.execPath,
         process.argv[1],
         '--color', 'false',
       ],
-    }),
+    },
   })
   await t.rejects(mock.npm.exec('org', []), /.*Usage/)
 })
 
 t.test('usage', async t => {
   t.test('with browser', async t => {
-    mockGlobals(t, { process: { platform: 'posix' } })
-    const { npm } = await loadMockNpm(t)
-    const usage = await npm.usage
+    const { npm } = await loadMockNpm(t, { globals: { process: { platform: 'posix' } } })
+    const usage = npm.usage
     npm.config.set('viewer', 'browser')
-    const browserUsage = await npm.usage
+    const browserUsage = npm.usage
     t.notMatch(usage, '(in a browser)')
     t.match(browserUsage, '(in a browser)')
   })
 
   t.test('windows always uses browser', async t => {
-    mockGlobals(t, { process: { platform: 'win32' } })
-    const { npm } = await loadMockNpm(t)
-    const usage = await npm.usage
+    const { npm } = await loadMockNpm(t, { globals: { process: { platform: 'win32' } } })
+    const usage = npm.usage
     npm.config.set('viewer', 'browser')
-    const browserUsage = await npm.usage
+    const browserUsage = npm.usage
     t.match(usage, '(in a browser)')
     t.match(browserUsage, '(in a browser)')
   })
 
   t.test('includes commands', async t => {
     const { npm } = await loadMockNpm(t)
-    const usage = await npm.usage
+    const usage = npm.usage
     npm.config.set('long', true)
-    const longUsage = await npm.usage
+    const longUsage = npm.usage
 
     const lastCmd = commands[commands.length - 1]
     for (const cmd of commands) {
@@ -740,40 +703,21 @@ t.test('usage', async t => {
   })
 
   t.test('set process.stdout.columns', async t => {
-    const { npm } = await loadMockNpm(t)
+    const { npm } = await loadMockNpm(t, {
+      config: { viewer: 'man' },
+    })
+    t.cleanSnapshot = str =>
+      str.replace(npm.config.get('userconfig'), '{USERCONFIG}')
+        .replace(npm.npmRoot, '{NPMROOT}')
+        .replace(`npm@${npm.version}`, 'npm@{VERSION}')
 
-    const colUsage = async (cols) => {
-      const usages = []
-      for (const col of cols) {
-        mockGlobals(t, { 'process.stdout.columns': col })
-        const usage = await npm.usage
-        usages.push(usage)
-      }
-      return usages
+    const widths = [0, 1, 10, 24, 40, 41, 75, 76, 90, 100]
+    for (const width of widths) {
+      t.test(`column width ${width}`, async t => {
+        mockGlobals(t, { 'process.stdout.columns': width })
+        const usage = npm.usage
+        t.matchSnapshot(usage)
+      })
     }
-
-    t.test('max size', async t => {
-      const usages = await colUsage([0, 76, 90, 100])
-      t.equal(usages.filter(Boolean).length, 4)
-      t.equal(new Set([...usages]).size, 1)
-    })
-
-    t.test('across max boundary', async t => {
-      const usages = await colUsage([75, 76])
-      t.equal(usages.filter(Boolean).length, 2)
-      t.equal(new Set([...usages]).size, 2)
-    })
-
-    t.test('min size', async t => {
-      const usages = await colUsage([1, 10, 24, 40])
-      t.equal(usages.filter(Boolean).length, 4)
-      t.equal(new Set([...usages]).size, 1)
-    })
-
-    t.test('different cols within min/max', async t => {
-      const usages = await colUsage([40, 41])
-      t.equal(usages.filter(Boolean).length, 2)
-      t.equal(new Set([...usages]).size, 2)
-    })
   })
 })
